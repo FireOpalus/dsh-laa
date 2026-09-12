@@ -1,0 +1,64 @@
+# Changelog
+
+本文件记录 `dsh-laa` 的每一个对外版本。
+
+格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循
+[语义化版本](https://semver.org/lang/zh-CN/)。「内部」一节只影响开发与验证方式，
+不改变插件的运行时行为。
+
+## [Unreleased]
+
+## [0.2.0] - 2026-09-12
+
+### 新增
+
+- **会话页顶栏的 LAA 滑动开关**：轨道 + `LAA` 标签，单击切换当前会话的模式；悬停显示
+  当前峰谷时段、下一次切换、峰时窗口与待恢复的输入条数；开启且正处峰时时轨道变琥珀色，
+  一眼看出它正被按住。（`lib/client.js`）
+- **浏览器控制面**：挂在 `ctx.webServer` 的 `/dsh-laa` 前缀下——`GET /health`、
+  `GET /state?sessionId=<id>`、`POST /mode { sessionId, enabled }`。坏输入返回
+  400 / 409 / 404 且**不会先把状态改掉**；没有 `webServer` 的组合只是没有浏览器入口，
+  调度行为不受影响。（`lib/web.js`）
+- **隔离测试环境**：`node scripts/dev-home.mjs` 在工作区里建一个只属于本仓库的 DSH
+  home（`.dsh-test/`，含 `web` 与 `headless` 两个 profile），与 `~/.dsh` 完全分开；
+  `--boot` 可直接启动。
+- **零成本端到端验证**：`npm run e2e` 在真实的 DSH 与真实 agent loop 上验证
+  「峰时确实停住、输入确实保住」，而一个模型请求都不发。
+
+### 变更
+
+- `/laa` 命令、顶栏开关与控制面现在读同一份 `runtime.snapshot()`，前端不再自己拼装
+  状态，因此命令、开关与状态文件三者永远一致。
+
+### 内部
+
+- 新增 `test/web.test.js`（控制面处理器，以及真实路由的挂载与前缀转发）与
+  `test/client.test.js`（在 Node 里真的执行浏览器 bundle：格式、插槽注册、
+  峰时/谷时/禁用三态渲染、单击发出的 POST 载荷）。
+- 测试用的假宿主改为按真实 Cordis 的语义做 `inject` 门控：依赖缺失时不回调，
+  服务补上后再补跑。
+- README 增补「本地隔离测试环境」「怎么测」「浏览器开关与控制面」三节。
+
+## [0.1.0] - 2026-09-12
+
+首个版本。
+
+### 新增
+
+- **会话级 LAA 模式**：打开后该会话只在 DeepSeek 谷时（空闲时段）运行。
+  - 峰时：正在跑的轮次立刻停下；任何想要进入的步骤在 `agent/pre-step` 瀑布里被拒绝，
+    因此**一个模型请求都不会发出**；被拦下的输入原样保存，不会丢。
+  - 谷时：被中断的轮次收到一条续跑提示词继续做；峰时暂存的输入按原顺序重新投递；
+    被拦下的 goal round 会把自动暂停的 goal 重新武装。
+  - 进程内子代理继承所属会话的模式。
+- **`/laa on | off | status` 斜杠命令**：直接作用于会话，不产生模型消息，不花 token。
+- **峰谷窗口可配置**：默认取官方口径（北京时间周一至周五 09:00-12:00、14:00-18:00，
+  其余为空闲时段），支持星期名/数字两种写法与跨零点窗口；官方调整口径时只改配置，
+  不需要改代码。
+- **持久状态**：`$DSH_HOME/laa/state.json`（同步读 + 防抖原子写），开关与峰时暂存的
+  输入都跨重启存活；冷会话的遗留输入会保留到它下次变成实时会话。
+- 零运行时依赖：不 import 任何 `@deepseek-ai/*`，只用 Node 内建能力，无构建步骤。
+
+[Unreleased]: https://github.com/FireOpalus/dsh-laa/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/FireOpalus/dsh-laa/compare/v0.1.0...v0.2.0
+[0.1.0]: https://github.com/FireOpalus/dsh-laa/releases/tag/v0.1.0
