@@ -17,6 +17,7 @@ kind: "package-reference"
 
 - [安装](#安装)
 - [使用](#使用)
+- [浏览器开关与控制面](#控制面)
 - [峰时到底发生什么](#峰时到底发生什么)
 - [谷时到底发生什么](#谷时到底发生什么)
 - [配置](#配置)
@@ -58,8 +59,41 @@ LAA 模式是**每个会话各自**的开关，默认关闭。
 
 命令直接从 UI 作用到会话，不产生任何模型消息，因此开关本身不花 token。
 
-典型用法：晚上下班前对一个长任务说「继续做」，然后 `/laa on`——峰时它会自己停住，
-谷时（工作日 12:00-14:00、18:00 之后、以及整个周末）它会自己接着做。
+Web UI 里还有第二种入口：**会话页顶栏右侧的滑动开关**（轨道 + `LAA` 标签）。单击即
+切换当前会话的模式；悬停显示当前峰谷时段、下一次切换、峰时窗口与待恢复的输入条数；
+开启且正处峰时的时候轨道会变成琥珀色，一眼就能看出"它现在正被按住"。命令、开关、
+状态文件读的是同一份快照，因此三者永远一致。
+
+典型用法：晚上下班前对一个长任务说「继续做」，然后点一下那个开关（或 `/laa on`）——
+峰时它会自己停住，谷时（工作日 12:00-14:00、18:00 之后、以及整个周末）它会自己接着做。
+
+-----
+
+<a id="控制面"></a>
+## 浏览器开关与控制面
+
+顶栏开关通过宿主插件的一条 HTTP 控制面读写状态，路径全部挂在 `/dsh-laa` 前缀下，
+只用了 `ctx.webServer.register()` 这一条既有 seam（不需要 typert 远端声明，也不需要
+额外的依赖）：
+
+| 方法 | 路径 | 作用 |
+|---|---|---|
+| `GET` | `/dsh-laa/health` | 插件是否在跑、总开关、时区 |
+| `GET` | `/dsh-laa/state?sessionId=<id>` | 一个会话的完整状态（开关、峰谷、下一次切换、待恢复条数） |
+| `POST` | `/dsh-laa/mode` | `{ "sessionId": "...", "enabled": true }`，改写该会话的模式 |
+
+于是它也能被脚本直接驱动：
+
+```sh
+curl -s "$DSH_URL/dsh-laa/state?sessionId=$SID"
+curl -s -X POST "$DSH_URL/dsh-laa/mode" -H 'content-type: application/json' \
+  -d "{\"sessionId\":\"$SID\",\"enabled\":true}"
+```
+
+写入被拒绝时返回 400（缺参数/类型不对）、409（插件总开关 `enabled: false`）或 404
+（未知路径），并且**不会**先把状态改掉；前端拿到的永远只有 `{ ok, value }` 或
+`{ ok: false, error }`。控制面是可选挂载：没有 `webServer` 的组合（headless / SDK /
+ACP）只是没有浏览器入口，调度行为不受影响。
 
 <a id="峰时到底发生什么"></a>
 ## 峰时到底发生什么
@@ -276,6 +310,8 @@ profile 中的第三方插件要自己解析依赖，零依赖让它不与宿主
 | `lib/pricing.js` | 峰谷判定与窗口算术的纯函数：`resolvePhase`、`normalizeWindows`、`zonedTimeToEpoch` |
 | `lib/laa.js` | 运行时状态机：峰时停机、`agent/pre-step` 拦截、暂存、谷时续跑与重放 |
 | `lib/command.js` | `/laa` 斜杠命令 |
+| `lib/web.js` | 浏览器控制面：`/dsh-laa/health`、`/state`、`/mode` |
+| `lib/client.js` | 浏览器 bundle：会话顶栏的滑动开关（手写 `__ModuleLoader__` 格式，无构建步骤） |
 | `lib/store.js` | `$DSH_HOME/laa/state.json` 的同步读 / 防抖原子写 |
 | `scripts/dev-home.mjs` | 隔离测试环境（web + headless）的创建与启动 |
 | `scripts/e2e.mjs` | 零成本端到端验证：真实 headless 运行 + 状态文件断言 |

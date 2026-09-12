@@ -10,6 +10,8 @@
     "./runtime": "./lib/laa.js",
     "./store": "./lib/store.js",
     "./command": "./lib/command.js",
+    "./web": "./lib/web.js",
+    "./client": "./lib/client.js",
     "./cordis.patch.yml": "./cordis.patch.yml",
     "./package.json": "./package.json"
   },
@@ -25,7 +27,7 @@
     "node": "^22.19.0 || >=24.0.0"
   },
   "scripts": {
-    "test": "node --test --test-isolation=none test/pricing.test.js test/runtime.test.js test/plugin.test.js",
+    "test": "node --test --test-isolation=none test/pricing.test.js test/runtime.test.js test/plugin.test.js test/web.test.js test/client.test.js",
     "smoke": "node scripts/smoke.mjs",
     "e2e": "node scripts/e2e.mjs",
     "dev-home": "node scripts/dev-home.mjs",
@@ -45,6 +47,14 @@
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-runtime",
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-conversation"
+      ]
     }
   }
 }

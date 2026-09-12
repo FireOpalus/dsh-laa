@@ -29,7 +29,7 @@ export function baseConfig(statePath) {
  *   创建运行时，留给 `apply()` 自己去建，用于端到端验证插件入口）。
  * @returns 宿主句柄。
  */
-export function createRuntimeHarness({ statePath, now, manual = false }) {
+export function createRuntimeHarness({ statePath, now, manual = false, config = {} }) {
   let clock = now;
   /** @type {any[]} */
   const agents = [];
@@ -39,6 +39,10 @@ export function createRuntimeHarness({ statePath, now, manual = false }) {
   const listeners = new Map();
   /** @type {Map<string, any>} */
   const commands = new Map();
+  /** @type {Map<string, any>} */
+  const services = new Map();
+  /** @type {{ list: string[], callback: (ctx: any) => void }[]} */
+  const pendingInjects = [];
   const logs = [];
 
   const ctx = {
@@ -75,11 +79,33 @@ export function createRuntimeHarness({ statePath, now, manual = false }) {
       const disposer = callback();
       if (typeof disposer === 'function') disposers.push(disposer);
     },
-    inject: (_services, callback) => {
-      callback(ctx);
+    /**
+     * 只在依赖的服务都存在时才回调——这一点与真实 Cordis 一致，是「可选挂载」
+     * 的全部意义所在；依赖缺失的回调会在服务补上后立刻补跑。
+     */
+    inject: (dependencies, callback) => {
+      const list = Array.isArray(dependencies) ? dependencies : [dependencies];
+      if (list.every((name) => services.has(name))) callback(ctx);
+      else pendingInjects.push({ list, callback });
     },
-    get: () => undefined,
+    get: (name) => services.get(name),
   };
+
+  /** 服务补齐后，把等待中的 `ctx.inject` 回调按注册顺序补跑。 */
+  function flushInjects() {
+    let progressed = true;
+    while (progressed) {
+      progressed = false;
+      for (let index = 0; index < pendingInjects.length; index += 1) {
+        const pending = pendingInjects[index];
+        if (!pending.list.every((name) => services.has(name))) continue;
+        pendingInjects.splice(index, 1);
+        index -= 1;
+        progressed = true;
+        pending.callback(ctx);
+      }
+    }
+  }
 
   /** 造一个假 agent；同一个 id 重复调用会复用并更新状态。 */
   function agent(id, options = {}) {
@@ -110,10 +136,13 @@ export function createRuntimeHarness({ statePath, now, manual = false }) {
 
   /** 用当前时钟建立一个新的运行时（同一份状态文件）。 */
   function createRuntime() {
-    const runtime = createLaaRuntime(ctx, baseConfig(statePath), { now: () => clock });
+    const runtime = createLaaRuntime(ctx, { ...baseConfig(statePath), ...config }, { now: () => clock });
     disposers.push(() => runtime.dispose());
     return runtime;
   }
+
+  // 假宿主自带的 services：命令适配器始终存在，webServer 由测试按需 provide。
+  services.set('commands', ctx.commands);
 
   let current = manual ? undefined : createRuntime();
 
@@ -128,6 +157,19 @@ export function createRuntimeHarness({ statePath, now, manual = false }) {
     createRuntime() {
       current = createRuntime();
       return current;
+    },
+    /**
+     * 补上一个服务：既进服务表（`ctx.get` / `ctx.inject` 用），也挂成 `ctx.<name>`
+     * 属性（插件里的 `webCtx.webServer` 那种读取方式用），与真实 Cordis 的代理一致。
+     */
+    provide(name, value) {
+      services.set(name, value);
+      ctx[name] = value;
+      flushInjects();
+      return () => {
+        services.delete(name);
+        delete ctx[name];
+      };
     },
     setNow(value) {
       clock = value;
