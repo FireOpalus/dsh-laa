@@ -26,7 +26,9 @@
   },
   "scripts": {
     "test": "node --test --test-isolation=none test/pricing.test.js test/runtime.test.js test/plugin.test.js",
-    "smoke": "node scripts/smoke.mjs"
+    "smoke": "node scripts/smoke.mjs",
+    "dev-home": "node scripts/dev-home.mjs",
+    "dev": "node scripts/dev-home.mjs --boot"
   },
   "keywords": [
     "dsh",

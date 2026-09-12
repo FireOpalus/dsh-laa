@@ -1,13 +1,17 @@
-# Dependencies (this package ships zero runtime dependencies, but a checkout may still install some)
+# 依赖（本包发布时零运行时依赖，但 checkout 里可能装过东西）
 node_modules/
 
-# Scratch DSH home used by verification runs
+# 隔离测试环境：一个只属于本仓库的 DSH home，由 scripts/dev-home.mjs 创建。
+# 它含有从真实 home 复制来的 .credentials.yaml 与运行期会话数据，绝不能提交。
+.dsh-test/
+
+# 早期验证用的临时 DSH home
 .tmp-dsh-home/
 
-# dsh-laa state file, if a checkout ever points statePath at the repo
+# 如果 checkout 里把插件的 statePath 指向了仓库根
 laa/state.json
 
-# Editor / OS noise
+# 编辑器与系统噪音
 .DS_Store
 Thumbs.db
 *.log

@@ -20,6 +20,7 @@ kind: "package-reference"
 - [峰时到底发生什么](#峰时到底发生什么)
 - [谷时到底发生什么](#谷时到底发生什么)
 - [配置](#配置)
+- [本地隔离测试环境](#测试环境)
 - [边界与已知限制](#边界与已知限制)
 - [开发](#开发)
 
@@ -138,6 +139,38 @@ LAA 模式是**每个会话各自**的开关，默认关闭。
 
 -----
 
+<a id="测试环境"></a>
+## 本地隔离测试环境
+
+`scripts/dev-home.mjs` 会在工作区里建一个**只属于本仓库**的 DSH home（`.dsh-test/`）。
+它和你日常在用的 `~/.dsh`（含其中的 `web` profile）完全分开：会话、设置、插件，
+以及 dsh-laa 自己的 `laa/state.json` 都落在那个目录下，所以测这个插件不会碰到你的
+真实环境。
+
+```sh
+node scripts/dev-home.mjs          # 创建/修复环境并打印状态（幂等，重复跑不会覆盖你的改动）
+node scripts/dev-home.mjs --boot   # 创建后启动 dsh web（用 Ctrl+C 结束）
+```
+
+脚本建立的东西：
+
+| 位置 | 内容 |
+|---|---|
+| `.dsh-test/profiles/web/package.json` | bundle 列表 = `@deepseek-ai/dsh-base`、`@deepseek-ai/dsh-web-app`、`dsh-laa`，`patchReload: live` |
+| `.dsh-test/profiles/web/node_modules/dsh-laa` | 指向本仓库的目录链接，所以改完源码重启即生效 |
+| `.dsh-test/profiles/web/cordis.patch.yml` | 只属于这个环境的用户 patch 层，预置了「整天峰时」与「每天头一分钟峰时」两段可直接取消注释的测试窗口 |
+| `.dsh-test/.credentials.yaml` | 从 `~/.dsh/.credentials.yaml` 复制的一份。隔离 home 看不到真实 home 的密钥，没有它这个环境一次模型请求都发不出去；脚本从不读取或打印密钥值 |
+
+`.dsh-test/` 整个目录都在 `.gitignore` 里。其它参数：`--refresh-credentials` 重新同步密钥、
+`--no-credentials` 建一个不带密钥的环境、`-- --port 64100` 换端口、`DSH_BIN=<路径>` 指定 dsh CLI。
+
+因为 profile 是 `patchReload: live`，改 `cordis.patch.yml` 保存后加载器会重新应用该插件
+（loader 在 config 变化时重启对应 fiber），运行时于是立刻按新窗口重新评估相位——不用重启
+就能在「峰时停机」和「谷时续跑」之间来回切换。想把插件完全摘掉试试，把 bundle 列表里的
+`dsh-laa` 删掉或给它加一行 `- id: laa` + `disabled: true` 即可。
+
+-----
+
 <a id="边界与已知限制"></a>
 ## 边界与已知限制
 
@@ -177,6 +210,7 @@ npm run smoke  # 在真实 Cordis 上验证 inject 门控、瀑布拦截、迟�
 | `lib/laa.js` | 运行时状态机：峰时停机、`agent/pre-step` 拦截、暂存、谷时续跑与重放 |
 | `lib/command.js` | `/laa` 斜杠命令 |
 | `lib/store.js` | `$DSH_HOME/laa/state.json` 的同步读 / 防抖原子写 |
+| `scripts/dev-home.mjs` | 上面那个隔离测试环境的创建与启动 |
 
 只用到 DSH 的公开扩展点：`ctx.agents` 注册表、`Agent.cancel/followup/status`、
 `agent/pre-step` 瀑布、`agent/created`、`ctx.commands.register` 与 `ctx.goals`（可选）。
