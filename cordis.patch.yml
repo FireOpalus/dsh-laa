@@ -1,0 +1,35 @@
+# dsh-laa bundle patch layer —— 该包本身就是插件包，安装后由本层插入加载器行。
+#
+# 安装：dsh plugin --profile web add dsh-laa（或开发时 add link:<本目录>），
+# 然后重启 dsh web / DSH Desktop。
+#
+# 提醒：profile 自己的 cordis.patch.yml 覆盖同一行时，是【整体替换】config
+# 而不是逐字段合并。因此这里只写必要字段，缺省值由 lib/laa.js 的
+# normalizeConfig() 补齐；要改峰谷窗口就在这里同时写出完整的 peakWindows。
+- insert:
+    - id: laa
+      name: 'dsh-laa'
+      config:
+        # 总开关：false 时插件照常加载，但任何会话都不会被停。
+        enabled: true
+        # 峰谷窗口所依据的时区（DeepSeek 官方口径为北京时间）。
+        timeZone: 'Asia/Shanghai'
+        # 峰时窗口，其余时段一律视为谷时。
+        # 官方口径：北京时间周一至周五 09:00-12:00、14:00-18:00。
+        peakWindows:
+          - days: [mon, tue, wed, thu, fri]
+            start: '09:00'
+            end: '12:00'
+          - days: [mon, tue, wed, thu, fri]
+            start: '14:00'
+            end: '18:00'
+        # 新会话默认是否开启 LAA 模式（每个会话仍可用 /laa on|off 单独切换）。
+        defaultMode: false
+        # 峰时开始时是否中止正在运行的轮次。
+        cancelRunningOnPeak: true
+        # 谷时开始时是否自动续跑被停下的工作。
+        resumeOnValley: true
+        # 相位安全检查间隔（毫秒），同时是窗口边界的兜底轮询。
+        tickMs: 30000
+        # 每个会话最多暂存多少条峰时输入，超出时丢弃最旧的。
+        maxDeferred: 20

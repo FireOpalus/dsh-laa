@@ -1,0 +1,47 @@
+{
+  "name": "dsh-laa",
+  "version": "0.1.0",
+  "description": "DSH 插件：为每个会话提供 LAA 模式——DeepSeek 峰时自动停止运行，谷时自动继续运行。",
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./pricing": "./lib/pricing.js",
+    "./runtime": "./lib/laa.js",
+    "./store": "./lib/store.js",
+    "./command": "./lib/command.js",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib",
+    "scripts",
+    "test",
+    "cordis.patch.yml",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": "^22.19.0 || >=24.0.0"
+  },
+  "scripts": {
+    "test": "node --test --test-isolation=none test/pricing.test.js test/runtime.test.js test/plugin.test.js",
+    "smoke": "node scripts/smoke.mjs"
+  },
+  "keywords": [
+    "dsh",
+    "deepseek-harness",
+    "dsh-plugin",
+    "plugin",
+    "laa",
+    "off-peak",
+    "peak",
+    "scheduling"
+  ],
+  "license": "MIT",
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  }
+}

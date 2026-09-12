@@ -1,0 +1,13 @@
+# Dependencies (this package ships zero runtime dependencies, but a checkout may still install some)
+node_modules/
+
+# Scratch DSH home used by verification runs
+.tmp-dsh-home/
+
+# dsh-laa state file, if a checkout ever points statePath at the repo
+laa/state.json
+
+# Editor / OS noise
+.DS_Store
+Thumbs.db
+*.log

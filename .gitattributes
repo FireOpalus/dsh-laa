@@ -1,0 +1,6 @@
+# 仓库内与所有工作区统一使用 LF。
+#
+# 本机 Git for Windows 设了 core.autocrlf=true，会让新克隆出来的 lib/*.js
+# 变成 CRLF。这是一个发布到 npm 的 Node 包，行尾不一致只会制造噪音与
+# 无意义的 diff，所以这里把它钉死。
+* text=auto eol=lf
