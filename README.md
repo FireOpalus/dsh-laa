@@ -21,6 +21,7 @@ kind: "package-reference"
 - [谷时到底发生什么](#谷时到底发生什么)
 - [配置](#配置)
 - [本地隔离测试环境](#测试环境)
+- [怎么测](#测试)
 - [边界与已知限制](#边界与已知限制)
 - [开发](#开发)
 
@@ -171,6 +172,75 @@ node scripts/dev-home.mjs --boot   # 创建后启动 dsh web（用 Ctrl+C 结束
 
 -----
 
+<a id="测试"></a>
+## 怎么测
+
+四层，从最便宜到最贵。前三层都跑在隔离环境里，不会碰你日常的 `~/.dsh`。
+
+### 1. 单元 / 集成测试 —— 秒级，不碰真实会话
+
+```sh
+npm test
+```
+
+28 个用例，自带一个只实现 LAA 用到的那部分 Cordis 契约的假宿主：峰谷算术（含跨零点、
+周末、下一个边界）、峰时拦截与暂存、谷时续跑与重放、工具结果不被当成用户输入、
+子代理继承、状态跨进程存活、`/laa` 命令、以及"没有 `export default`"这条模块形状约定。
+
+### 2. 真实 Cordis 冒烟 —— 秒级
+
+```sh
+npm run smoke
+```
+
+在真实的 `@deepseek-ai/cordis` 上验证假宿主替不掉的那部分：`inject` 门控、
+`agent/pre-step` 瀑布的 `{ prepend: true }` 顺序、`ctx.inject(['commands'])` 的迟到挂载、
+以及卸载时 effect 树的回收。
+
+### 3. 零成本端到端 —— 真实 DSH + 真实 agent loop，一个模型请求都不发
+
+```sh
+npm run e2e
+```
+
+`.dsh-test` 的 headless profile 把峰时窗口设成整天，于是任何步骤都会在
+`agent/pre-step` 里被拒绝——**拒绝发生在构建并发出请求之前**，所以这次运行不花任何
+token，却完整走过了真实的 agent loop、真实会话与真实插件运行时。脚本不断言 stdout，
+而是读插件自己的状态文件 `.dsh-test/laa/state.json`：
+
+```
+✔ 一次真实的 headless 运行创建了新会话并在插件里留了记录 — 1 条新记录
+✔ 该运行没有正常完成（被拦下的轮次映射为非零退出码） — exit=1
+✔ 被拒绝的是第 1 轮第 1 步 — {"turn":1,"step":1,"deferred":1}
+✔ 输入没有丢：被原样暂存进 laa/state.json — deferred=1
+```
+
+### 4. 手动交互验证 —— 需要你自己点，会真的调用模型
+
+```sh
+node scripts/dev-home.mjs --boot     # 启动隔离环境的 web
+```
+
+**A. 看「峰时停机」**：打开 `.dsh-test/profiles/web/cordis.patch.yml`，取消注释第一段
+（窗口 = 整天），保存。因为 profile 是 `patchReload: live`，加载器会重新应用插件。
+然后在会话里发一句话：
+
+- 会话不会产生任何回答（请求根本没发出）；
+- `/laa` 会报告「当前 DeepSeek 时段：峰时」和「等待谷时：N 条暂存输入」；
+- `.dsh-test/laa/state.json` 里出现 `deferred` 与 `lastRefusal`。
+
+**B. 看「谷时续跑」**：把同一段里的 `end: '23:59'` 改成 `'00:01'`（每天只有头一分钟是
+峰时），保存。插件重新加载后会立刻按谷时评估，把上一步暂存的输入投递出去——这时才会
+真的调用模型，你会看到会话把刚才那句话接着做完。
+
+**C. 看开关**：`/laa off` 之后同样的输入会直接执行；`/laa on` 再回到 A 的行为。
+
+> 观察点只有三个：`/laa` 的输出、`.dsh-test/laa/state.json`、以及会话本身有没有
+> 产生回答。cordis 的默认 logger 只做内存缓冲、不打到终端，所以别指望在控制台看到
+> 插件的 `logger.info`。
+
+-----
+
 <a id="边界与已知限制"></a>
 ## 边界与已知限制
 
@@ -198,10 +268,7 @@ node scripts/dev-home.mjs --boot   # 创建后启动 dsh web（用 Ctrl+C 结束
 本包是**零运行时依赖**的纯 ESM：不 import 任何 `@deepseek-ai/*`，只用 Node 内建能力。
 profile 中的第三方插件要自己解析依赖，零依赖让它不与宿主版本耦合，也不需要构建步骤。
 
-```sh
-npm test     # 20+ 个单元/集成测试，自带假宿主，不碰真实会话
-npm run smoke  # 在真实 Cordis 上验证 inject 门控、瀑布拦截、迟到服务挂载与资源回收
-```
+验证入口见上一节。npm 脚本：`test`、`smoke`、`e2e`、`dev-home`、`dev`。
 
 | 文件 | 职责 |
 |---|---|
@@ -210,7 +277,8 @@ npm run smoke  # 在真实 Cordis 上验证 inject 门控、瀑布拦截、迟�
 | `lib/laa.js` | 运行时状态机：峰时停机、`agent/pre-step` 拦截、暂存、谷时续跑与重放 |
 | `lib/command.js` | `/laa` 斜杠命令 |
 | `lib/store.js` | `$DSH_HOME/laa/state.json` 的同步读 / 防抖原子写 |
-| `scripts/dev-home.mjs` | 上面那个隔离测试环境的创建与启动 |
+| `scripts/dev-home.mjs` | 隔离测试环境（web + headless）的创建与启动 |
+| `scripts/e2e.mjs` | 零成本端到端验证：真实 headless 运行 + 状态文件断言 |
 
 只用到 DSH 的公开扩展点：`ctx.agents` 注册表、`Agent.cancel/followup/status`、
 `agent/pre-step` 瀑布、`agent/created`、`ctx.commands.register` 与 `ctx.goals`（可选）。

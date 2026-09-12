@@ -27,6 +27,7 @@
   "scripts": {
     "test": "node --test --test-isolation=none test/pricing.test.js test/runtime.test.js test/plugin.test.js",
     "smoke": "node scripts/smoke.mjs",
+    "e2e": "node scripts/e2e.mjs",
     "dev-home": "node scripts/dev-home.mjs",
     "dev": "node scripts/dev-home.mjs --boot"
   },
