@@ -372,6 +372,18 @@ test('坏掉的谱系（自指或成环）不会让解析转不出来', () => {
   });
 });
 
+test('通知策略：默认 enabled，always / off 原样，其它值一律退回默认', () => {
+  withHarness({ now: BEIJING_SATURDAY, config: { notify: 'always' } }, (h) => {
+    assert.equal(h.runtime.snapshot('session-a').notify, 'always');
+  });
+  withHarness({ now: BEIJING_SATURDAY, config: { notify: 'off' } }, (h) => {
+    assert.equal(h.runtime.snapshot('session-a').notify, 'off');
+  });
+  withHarness({ now: BEIJING_SATURDAY, config: { notify: 'yes-please' } }, (h) => {
+    assert.equal(h.runtime.snapshot('session-a').notify, 'enabled');
+  });
+});
+
 test('开关会持久化到状态文件，并在下一次载入时恢复', () => {
   withHarness({ now: BEIJING_SATURDAY }, (h) => {
     h.runtime.setEnabled('session-a', true);

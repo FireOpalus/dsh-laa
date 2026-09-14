@@ -25,6 +25,9 @@
             end: '18:00'
         # 新会话默认是否开启 LAA 模式（每个会话仍可用 /laa on|off 单独切换）。
         defaultMode: false
+        # 峰谷切换时的浏览器通知策略：enabled（只有开着 LAA 的会话才播报）/ always / off。
+        # 开关上「跳三下 + 平滑变色」的动画不受它影响。
+        notify: enabled
         # 峰时开始时是否中止正在运行的轮次。
         cancelRunningOnPeak: true
         # 谷时开始时是否自动续跑被停下的工作。

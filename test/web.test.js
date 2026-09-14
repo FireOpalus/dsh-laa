@@ -61,6 +61,7 @@ test('GET /state 返回与命令、状态文件同源的那份快照', () => {
     assert.equal(value.timeZone, 'Asia/Shanghai');
     assert.equal(value.peakWindows, '周一至周五 09:00-12:00、周一至周五 14:00-18:00');
     assert.equal(value.masterEnabled, true);
+    assert.equal(value.notify, 'enabled', '通知策略随快照一起交给前端');
     assert.equal(value.deferred, 0);
     // 与 /laa 命令读的是同一个 snapshot()
     assert.deepEqual(value, runtime.snapshot('s1'));

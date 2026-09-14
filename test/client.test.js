@@ -45,6 +45,105 @@ function createReact(preset = []) {
   };
 }
 
+/**
+ * 有状态的假 React：够把同一个函数组件渲染多次（useState / useRef / useEffect /
+ * useCallback）。真 React 的调度不在测试范围内，这里只保证两件事：`setState` 之后
+ * 重新渲染，以及 effect 由测试显式 `runEffects()` 驱动——于是轮询、边界定时器、
+ * 切换动画的收尾都可控，不会自己跑起来。
+ * @returns 假的 react 模块与 `mount` / `runEffects` 两个驱动器。
+ */
+function createStatefulReact() {
+  const slots = [];
+  const effects = new Map();
+  let cursor = 0;
+  let queued = [];
+  let renderInstance = null;
+  let latest = null;
+
+  const react = {
+    useState(initial) {
+      const index = cursor++;
+      if (!(index in slots)) slots[index] = typeof initial === 'function' ? initial() : initial;
+      return [slots[index], (next) => {
+        slots[index] = typeof next === 'function' ? next(slots[index]) : next;
+        latest = renderInstance(false);
+      }];
+    },
+    useRef(initial) {
+      const index = cursor++;
+      if (!(index in slots)) slots[index] = { current: initial };
+      return slots[index];
+    },
+    useCallback(fn) {
+      cursor += 1;
+      return fn;
+    },
+    useEffect(fn, deps) {
+      queued.push({ index: cursor++, fn, deps });
+    },
+    useMemo(fn) {
+      cursor += 1;
+      return fn();
+    },
+    createElement: (type, props, children) => ({ type, props: props ?? {}, children }),
+  };
+
+  /** 跑这一轮排队的 effect；依赖没变的不重跑，重跑前先执行上一次的清理。 */
+  function runEffects() {
+    const pending = queued;
+    queued = [];
+    for (const effect of pending) {
+      const previous = effects.get(effect.index);
+      const same = previous !== undefined
+        && Array.isArray(effect.deps)
+        && Array.isArray(previous.deps)
+        && effect.deps.length === previous.deps.length
+        && effect.deps.every((value, index) => Object.is(value, previous.deps[index]));
+      if (same) continue;
+      if (previous !== undefined && typeof previous.cleanup === 'function') previous.cleanup();
+      const cleanup = effect.fn();
+      effects.set(effect.index, { deps: effect.deps, cleanup: typeof cleanup === 'function' ? cleanup : undefined });
+    }
+  }
+
+  return {
+    react,
+    /** 挂载一个全新的组件实例（清空插槽），返回元素；effect 交给 runEffects()。 */
+    mount(Component, props) {
+      slots.length = 0;
+      effects.clear();
+      renderInstance = (withEffects) => {
+        cursor = 0;
+        queued = [];
+        const element = Component(props);
+        if (withEffects) runEffects();
+        return element;
+      };
+      latest = renderInstance(false);
+      return latest;
+    },
+    /** 显式跑 effect（例如组件挂载后的那一轮拉取）。 */
+    runEffects,
+    /**
+     * 卸载：执行所有 effect 的清理函数。
+     *
+     * 必须调用——轮询间隔与边界定时器都挂在 effect 的清理上，不卸载的话测试进程
+     * 会被一个最长 30 分钟的真实定时器拖住。
+     */
+    unmount() {
+      for (const effect of effects.values()) {
+        if (typeof effect.cleanup === 'function') effect.cleanup();
+      }
+      effects.clear();
+      slots.length = 0;
+    },
+    /** 最近一次渲染出来的元素。 */
+    get element() {
+      return latest;
+    },
+  };
+}
+
 let bundleEntry;
 
 /** 平台模块表里 conversation 包的 id，与 package.json 的 dsh.client.inject 一致。 */
@@ -133,6 +232,70 @@ function registrationOf(client, name) {
   const found = client.registrations.find((item) => item.options.name === name);
   assert.ok(found, `必须注册进 ${name}`);
   return found;
+}
+
+/** 控制面快照的完整形状；`nextChangeAt` 给足余量，免得边界定时器在测试里乱跑。 */
+function controlState(overrides = {}) {
+  return {
+    sessionId: 's1',
+    enabled: true,
+    inheritedFrom: null,
+    phase: 'valley',
+    notify: 'enabled',
+    now: 1789389000000,
+    nextChangeAt: 1789400000000,
+    timeZone: 'Asia/Shanghai',
+    localNow: '2026-09-14 22:00（周一）',
+    localNextChange: '2026-09-15 09:00（周二）',
+    peakWindows: '周一至周五 09:00-12:00',
+    masterEnabled: true,
+    defaultMode: false,
+    deferred: 0,
+    suspended: false,
+    ...overrides,
+  };
+}
+
+/** 记录构造调用的假 Notification。 */
+function createNotification(permission = 'granted') {
+  const created = [];
+  let requests = 0;
+  class FakeNotification {
+    static permission = permission;
+    static requestPermission() {
+      requests += 1;
+      FakeNotification.permission = 'granted';
+      return Promise.resolve('granted');
+    }
+    constructor(title, options) {
+      created.push({ title, options });
+    }
+  }
+  return { FakeNotification, created, requests: () => requests };
+}
+
+/** 让出一次宏任务，把 fetch 链上的微任务跑完。 */
+function settle() {
+  return new Promise((resolve) => setImmediate(resolve));
+}
+
+/**
+ * 驱动一次「谷时 -> 峰时」的切换：先拉一次旧相位，再拉一次新相位。
+ * @param harness - 有状态假 React。
+ * @param component - 开关组件。
+ * @param props - 组件 props。
+ * @param before - 切换前的快照。
+ * @param after - 切换后的快照。
+ */
+async function driveFlip(harness, component, props, before, after) {
+  let current = before;
+  globalThis.fetch = () => Promise.resolve({ json: () => Promise.resolve({ ok: true, value: current }) });
+  harness.mount(component, props);
+  harness.runEffects();
+  await settle();
+  current = after;
+  harness.runEffects();
+  await settle();
 }
 
 /**
@@ -385,6 +548,131 @@ test('顶层会话的悬停提示里没有「跟随父会话」这一行', async
 
   assert.doesNotMatch(element.props.title, /跟随父会话/);
   assert.match(element.props.title, /^LAA 已开启$/m);
+});
+
+test('峰谷切换：开关跳三下、平滑变色，并弹出浏览器通知', async (t) => {
+  /* 轮询用的 setInterval 也交给假时钟，免得测试结束后还挂着一个真实定时器。 */
+  t.mock.timers.enable({ apis: ['setTimeout', 'setInterval'] });
+  const { FakeNotification, created } = createNotification('granted');
+  globalThis.Notification = FakeNotification;
+  try {
+    const harness = createStatefulReact();
+    const { exports } = await loadBundle(harness.react);
+    const client = createClientContext();
+    exports.apply(client.ctx);
+    const zh = client.dictionaries[0].dict.zh;
+    const component = registrationOf(client, 'conversation.session.header.utilities').component;
+
+    let current = controlState({ phase: 'valley' });
+    globalThis.fetch = () => Promise.resolve({ json: () => Promise.resolve({ ok: true, value: current }) });
+
+    const props = { sessionId: 's1', t: (key) => zh[key] ?? key };
+    harness.mount(component, props);
+    harness.runEffects();
+    await settle();
+
+    assert.equal(harness.element.props['data-laa-phase'], 'valley');
+    assert.equal(harness.element.props['data-laa-flip'], '', '第一次看到相位不算切换');
+    assert.doesNotMatch(harness.element.props.className, /is-flipping/);
+    assert.equal(created.length, 0, '页面刚打开时不打扰');
+
+    /* 相位翻到峰时：跳三下（is-flipping）+ 平滑变色（CSS）+ 一条通知 */
+    current = controlState({ phase: 'peak' });
+    harness.runEffects();
+    await settle();
+
+    assert.match(harness.element.props.className, /is-flipping/, '切换时要播动画');
+    assert.equal(harness.element.props['data-laa-flip'], 'peak');
+    assert.equal(harness.element.props['data-laa-phase'], 'peak');
+    assert.equal(created.length, 1);
+    assert.equal(created[0].title, 'LAA · 进入峰时');
+    assert.match(created[0].options.body, /会话已暂停/);
+    assert.equal(created[0].options.tag, 'dsh-laa:s1', '同一会话的通知互相顶替');
+
+    /* 动画窗口过去之后恢复常态 */
+    t.mock.timers.tick(1400);
+    assert.equal(harness.element.props['data-laa-flip'], '');
+    assert.doesNotMatch(harness.element.props.className, /is-flipping/);
+
+    /* 再翻回谷时：第二条通知，第二条动画 */
+    current = controlState({ phase: 'valley' });
+    harness.runEffects();
+    await settle();
+    assert.equal(created.length, 2);
+    assert.equal(created[1].title, 'LAA · 进入谷时');
+    assert.equal(harness.element.props['data-laa-flip'], 'valley');
+    harness.unmount();
+  } finally {
+    delete globalThis.Notification;
+  }
+});
+
+test('通知策略：默认只播报开着 LAA 的会话，always 也播报关着的，off 不播报', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'setInterval'] });
+  const { FakeNotification, created } = createNotification('granted');
+  globalThis.Notification = FakeNotification;
+  try {
+    const harness = createStatefulReact();
+    const { exports } = await loadBundle(harness.react);
+    const client = createClientContext();
+    exports.apply(client.ctx);
+    const component = registrationOf(client, 'conversation.session.header.utilities').component;
+    const props = { sessionId: 's1', t: (key) => key };
+
+    await driveFlip(harness, component, props, controlState({ enabled: false }), controlState({ enabled: false, phase: 'peak' }));
+    assert.equal(created.length, 0, '默认策略不播报关着 LAA 的会话');
+    assert.equal(harness.element.props['data-laa-flip'], 'peak', '但动画照播');
+
+    await driveFlip(harness, component, props, controlState({ enabled: false, notify: 'always' }), controlState({ enabled: false, notify: 'always', phase: 'peak' }));
+    assert.equal(created.length, 1);
+    assert.equal(created[0].title, 'flipPeakTitle', '用 always 策略时照播');
+
+    await driveFlip(harness, component, props, controlState({ notify: 'off' }), controlState({ notify: 'off', phase: 'peak' }));
+    assert.equal(created.length, 1, 'off 策略下不新增通知');
+    harness.unmount();
+  } finally {
+    delete globalThis.Notification;
+  }
+});
+
+test('没有 Notification API 时切换照常播动画，不抛错', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'setInterval'] });
+  const harness = createStatefulReact();
+  const { exports } = await loadBundle(harness.react);
+  const client = createClientContext();
+  exports.apply(client.ctx);
+  const component = registrationOf(client, 'conversation.session.header.utilities').component;
+
+  await driveFlip(harness, component, { sessionId: 's1', t: (key) => key }, controlState(), controlState({ phase: 'peak' }));
+  assert.equal(harness.element.props['data-laa-flip'], 'peak');
+  assert.equal(harness.element.props['data-laa-phase'], 'peak');
+  harness.unmount();
+});
+
+test('点开关时顺手申请一次通知权限（浏览器要求用户手势）', async () => {
+  const { FakeNotification, requests } = createNotification('default');
+  globalThis.Notification = FakeNotification;
+  try {
+    const harness = createStatefulReact();
+    const { exports } = await loadBundle(harness.react);
+    const client = createClientContext();
+    exports.apply(client.ctx);
+    const component = registrationOf(client, 'conversation.session.header.utilities').component;
+    const state = controlState({ enabled: false });
+    globalThis.fetch = () => Promise.resolve({ json: () => Promise.resolve({ ok: true, value: state }) });
+
+    harness.mount(component, { sessionId: 's1', t: (key) => key });
+    harness.runEffects();
+    await settle();
+    assert.equal(requests(), 0, '光看页面不打扰用户');
+
+    harness.element.props.onClick();
+    await settle();
+    assert.equal(requests(), 1, '用户点开关时正好有手势');
+    harness.unmount();
+  } finally {
+    delete globalThis.Notification;
+  }
 });
 
 test('单击开关会把新状态 POST 给控制面', async () => {
