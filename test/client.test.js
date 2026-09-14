@@ -47,14 +47,31 @@ function createReact(preset = []) {
 
 let bundleEntry;
 
+/** 平台模块表里 conversation 包的 id，与 package.json 的 dsh.client.inject 一致。 */
+const CONVERSATION_ID = '@deepseek-ai/dsh-client-ui-conversation';
+
+/**
+ * 与 ui-conversation 同一条规则的测试替身：宿主用它决定顶栏显不显示
+ * （`session.blank && conversationPhase(...) === "blank"` 时整条顶栏被藏起来）。
+ */
+function conversationPhase(session, conversation) {
+  return conversation.activeTargets.size > 0 || (!session.blank && !session.awaitingFirstTurn) || session.running
+    ? 'active'
+    : session.promptAttempted ? 'engaging' : 'blank';
+}
+
 /**
  * 载入 bundle，并针对本次测试调用一次工厂。
  *
  * ESM 的模块体只会求值一次，所以 `window.__ModuleLoader__.load()` 也只会被调用一次；
  * 这正是真实加载器的行为（模块求值一次，工厂按需调用）。每个测试拿到的是同一份
  * bundle 注册记录，但各自一份全新的模块导出与 `document`。
+ *
+ * @param react - 假的 react 模块。
+ * @param options.conversation - 假的 conversation 包；传 `null` 表示组合里没有它
+ *   （真实加载器此时会让 require 抛错），用来验证退回路径。
  */
-async function loadBundle(react) {
+async function loadBundle(react, options = {}) {
   const document = createDocument();
   globalThis.document = document;
   globalThis.fetch = () => Promise.reject(new Error('fetch is not stubbed in this test'));
@@ -65,11 +82,65 @@ async function loadBundle(react) {
     assert.equal(loads.length, 1, 'bundle 必须恰好注册一次');
     bundleEntry = loads[0];
   }
+  const conversation = Object.hasOwn(options, 'conversation') ? options.conversation : { conversationPhase };
+  const modules = new Map([
+    ['react', react],
+    [CONVERSATION_ID, conversation],
+  ]);
+  const requested = [];
   const exports = bundleEntry.factory((name) => {
-    assert.equal(name, 'react', 'bundle 只应请求 react');
-    return react;
+    requested.push(name);
+    if (!modules.has(name) || modules.get(name) === null || modules.get(name) === undefined) {
+      throw new Error(`client-modules: require("${name}") missed the module table`);
+    }
+    return modules.get(name);
   });
-  return { id: bundleEntry.id, exports, document };
+  return { id: bundleEntry.id, exports, document, requested };
+}
+
+/** 一个还没有发过消息的会话（新对话页的那一份快照）。 */
+function blankSession(overrides = {}) {
+  return {
+    sessionId: 's1',
+    blank: true,
+    running: false,
+    promptAttempted: false,
+    awaitingFirstTurn: false,
+    ...overrides,
+  };
+}
+
+/** 空 conversation 快照：没有任何活跃 target。 */
+const EMPTY_CONVERSATION = { activeTargets: new Set() };
+
+/**
+ * 插槽按 session 作用域发给每个条目的那部分 props。
+ * @param session - 会话快照。
+ * @param conversation - conversation 快照。
+ * @param t - 翻译函数，默认回显 key。
+ */
+function sessionScopeProps(session, conversation = EMPTY_CONVERSATION, t = (key) => key) {
+  return {
+    sessionId: session.sessionId,
+    useSession: (selector) => selector(session),
+    useConversation: (selector) => selector(conversation),
+    t,
+  };
+}
+
+/** 按插槽名取回本次注册，避免测试依赖注册顺序。 */
+function registrationOf(client, name) {
+  const found = client.registrations.find((item) => item.options.name === name);
+  assert.ok(found, `必须注册进 ${name}`);
+  return found;
+}
+
+/**
+ * 展开插槽条目的一层：输入框那份开关是一个只会转交（或返回 null）的组件，
+ * 真正的按钮在它渲染出来的元素里。
+ */
+function renderElement(element) {
+  return element !== null && typeof element.type === 'function' ? element.type(element.props) : element;
 }
 
 /** 假的客户端上下文。 */
@@ -113,10 +184,12 @@ test('bundle 以 __ModuleLoader__ 的约定注册，并导出 apply/inject', asy
   assert.equal(Object.hasOwn(exports, 'default'), false);
 });
 
-test('apply() 注入样式与中英字典，并把开关注册进会话顶栏工具区', async () => {
-  const { exports, document } = await loadBundle(createReact());
+test('apply() 注入样式与中英字典，并把开关注册进顶栏工具区与输入框工具行', async () => {
+  const { exports, document, requested } = await loadBundle(createReact());
   const client = createClientContext();
   exports.apply(client.ctx);
+
+  assert.deepEqual(requested, ['react', CONVERSATION_ID], 'bundle 只应请求 react 与 conversation 包');
 
   assert.equal(document.appended.length, 1, '样式必须被注入一次');
   assert.equal(document.appended[0].tag, 'style');
@@ -128,23 +201,79 @@ test('apply() 注入样式与中英字典，并把开关注册进会话顶栏工
   assert.equal(typeof client.dictionaries[0].dict.zh.aria, 'string');
   assert.equal(typeof client.dictionaries[0].dict.en.aria, 'string');
 
-  assert.deepEqual(client.slots.injected, ['conversation.session.header.utilities']);
-  assert.equal(client.registrations.length, 1);
-  const { options, component } = client.registrations[0];
-  assert.equal(options.name, 'conversation.session.header.utilities');
-  assert.equal(options.id, 'dsh-laa');
-  assert.equal(options.order, 95);
-  assert.equal(options.locale, 'dsh-laa');
-  assert.deepEqual(options.inject('session-7'), { sessionId: 'session-7' });
-  assert.equal(typeof component, 'function');
+  // 顶栏那份是常驻的，输入框那份只在新对话页（顶栏被 DSH 藏起来）时出场。
+  assert.deepEqual(client.slots.injected, [
+    'conversation.session.header.utilities',
+    'conversation.input.left',
+  ]);
+  assert.equal(client.registrations.length, 2);
+  for (const { options, component } of client.registrations) {
+    assert.equal(options.id, 'dsh-laa');
+    assert.equal(options.order, 95);
+    assert.equal(options.locale, 'dsh-laa');
+    assert.deepEqual(options.inject('session-7'), { sessionId: 'session-7' });
+    assert.equal(typeof component, 'function');
+  }
+  assert.equal(registrationOf(client, 'conversation.session.header.utilities').component.name, 'LaaToggle');
+  assert.equal(registrationOf(client, 'conversation.input.left').component.name, 'LaaComposerToggle');
 
   // 卸载路径：每个 effect 都得给出一个可调用的清理函数。
   assert.deepEqual(client.effects.map((item) => item.label), [
     'dsh-laa: styles',
     'dsh-laa: dictionaries',
     'dsh-laa: session header toggle',
+    'dsh-laa: composer toggle',
   ]);
   for (const effect of client.effects) assert.equal(typeof effect.dispose, 'function');
+});
+
+test('新对话页（DSH 把顶栏藏起来）时，开关出现在输入框工具行里', async () => {
+  const { exports } = await loadBundle(createReact([null, false, '']));
+  const client = createClientContext();
+  exports.apply(client.ctx);
+  const { component } = registrationOf(client, 'conversation.input.left');
+
+  const element = renderElement(component(sessionScopeProps(blankSession({ sessionId: 'fresh' }))));
+  assert.equal(element.type, 'button');
+  assert.equal(element.props.role, 'switch');
+  assert.equal(element.props['data-laa-session'], 'fresh');
+  assert.equal(element.props.disabled, true, '还没拿到状态时开关是禁用且关闭的');
+});
+
+test('顶栏已经显示开关时，输入框工具行不再画第二个', async () => {
+  const { exports } = await loadBundle(createReact());
+  const client = createClientContext();
+  exports.apply(client.ctx);
+  const { component } = registrationOf(client, 'conversation.input.left');
+
+  const cases = [
+    ['第一条消息正在提交（engaging）', blankSession({ promptAttempted: true }), EMPTY_CONVERSATION],
+    ['会话已经开动（blank 已翻转）', blankSession({ blank: false }), EMPTY_CONVERSATION],
+    ['已经有活跃 target', blankSession(), { activeTargets: new Set(['chat']) }],
+    ['会话正在跑', blankSession({ running: true }), EMPTY_CONVERSATION],
+  ];
+  for (const [why, session, conversation] of cases) {
+    assert.equal(component(sessionScopeProps(session, conversation)), null, why);
+  }
+});
+
+test('拿不到 conversation 包时退回 session.blank 判断，开关仍然出现在新对话页', async () => {
+  const { exports } = await loadBundle(createReact([null, false, '']), { conversation: null });
+  const client = createClientContext();
+  exports.apply(client.ctx);
+  const { component } = registrationOf(client, 'conversation.input.left');
+
+  assert.equal(renderElement(component(sessionScopeProps(blankSession()))).type, 'button');
+  assert.equal(component(sessionScopeProps(blankSession({ blank: false }))), null);
+});
+
+test('宿主没给作用域标准 Hook 时不画第二个开关', async () => {
+  const { exports } = await loadBundle(createReact());
+  const client = createClientContext();
+  exports.apply(client.ctx);
+  const { component } = registrationOf(client, 'conversation.input.left');
+
+  assert.equal(component({ sessionId: 's1', t: (key) => key }), null);
 });
 
 test('未拿到状态时开关是禁用且关闭的（不会闪出一个假的开启态）', async () => {
