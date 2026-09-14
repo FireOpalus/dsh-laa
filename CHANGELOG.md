@@ -8,6 +8,24 @@
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-09-14
+
+### 修复
+
+- **升级前就存在的子会话也会跟随父会话**：0.3.0 只在「插件亲眼见过这个子会话」时才
+  认得出它的父会话（实时 agent、宿主会话仓库里的实时会话，或见过一次之后落盘的
+  `lineage`），于是**升级之前创建、之后一直冷着的子会话**依旧显示它自己那一份开关。
+  控制面现在会在第一次收到请求时向宿主的会话清单（`ctx.sessionQuery.listSessions()`，
+  就是侧栏用的那一份）补一次谱系，每个进程一次；读失败只是退回原来的判断，不影响控制面。
+  （`lib/laa.js`、`lib/web.js`）
+
+### 内部
+
+- `test/runtime.test.js` 的 `withHarness()` 现在同时支持同步与异步测试体（异步时等
+  它结束再回收运行时与临时目录）。
+- 新增 3 个用例：从会话清单补谱系（补之前只看见自己、补之后跟随父会话、每进程只扫
+  一次）、清单读失败后仍可重试、控制面在冷子会话上补谱系后读与写都落在父会话。
+
 ## [0.3.0] - 2026-09-14
 
 ### 新增
@@ -106,7 +124,8 @@
   输入都跨重启存活；冷会话的遗留输入会保留到它下次变成实时会话。
 - 零运行时依赖：不 import 任何 `@deepseek-ai/*`，只用 Node 内建能力，无构建步骤。
 
-[Unreleased]: https://github.com/FireOpalus/dsh-laa/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/FireOpalus/dsh-laa/compare/v0.3.1...HEAD
+[0.3.1]: https://github.com/FireOpalus/dsh-laa/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/FireOpalus/dsh-laa/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/FireOpalus/dsh-laa/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/FireOpalus/dsh-laa/compare/v0.1.0...v0.2.0
