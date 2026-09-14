@@ -8,6 +8,23 @@
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-09-14
+
+### 修复
+
+- **新对话页也有 LAA 开关了**：会话还没有第一条消息时，DSH 会把整条会话顶栏藏起来
+  （`ConversationSessionHeader` 里的 `hideChrome`），注册在顶栏里的开关因此根本不会
+  挂载——新对话页，以及正在打开的会话，都没有可点的开关。同一个开关现在也注册进
+  输入框工具行（`conversation.input.left`），并且**只在顶栏确实不显示时**渲染，因此
+  页面上任何时刻都恰好有一个开关：可以在发出第一条消息之前就把 LAA 打开。
+  （`lib/client.js`）
+
+### 内部
+
+- `test/client.test.js` 新增 4 个用例：新对话页出现在输入框工具行、顶栏可见时不重复
+  渲染（engaging / 已开动 / 有活跃 target / 正在跑四种状态）、拿不到 conversation 包时
+  退回 `session.blank` 判断、宿主没给作用域标准 Hook 时不画第二个开关。
+
 ## [0.2.0] - 2026-09-12
 
 ### 新增
@@ -59,6 +76,7 @@
   输入都跨重启存活；冷会话的遗留输入会保留到它下次变成实时会话。
 - 零运行时依赖：不 import 任何 `@deepseek-ai/*`，只用 Node 内建能力，无构建步骤。
 
-[Unreleased]: https://github.com/FireOpalus/dsh-laa/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/FireOpalus/dsh-laa/compare/v0.2.1...HEAD
+[0.2.1]: https://github.com/FireOpalus/dsh-laa/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/FireOpalus/dsh-laa/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/FireOpalus/dsh-laa/releases/tag/v0.1.0
