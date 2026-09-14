@@ -8,6 +8,36 @@
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-09-14
+
+### 新增
+
+- **子会话跟随父会话的 LAA 模式**：DSH 的 subagent 子会话（header 里带
+  `origin: 'subagent'` 与 `parentSession`）不再各存一份开关，而是沿谱系向上取**顶层
+  会话（锚点）**的那一个——父会话开着子会话就开着、父会话关掉子会话立刻放行；在子会话
+  里点开关（或 `/laa on|off`）改的就是父会话，整棵会话树永远只有一个开关。悬停提示与
+  `/laa` 都会写明「跟随父会话」。（`lib/laa.js`、`lib/store.js`、`lib/command.js`、`lib/client.js`）
+- **谱系落盘**：`$DSH_HOME/laa/state.json` 新增 `lineage` 字段（子会话 → 父会话），
+  事实来自会话 header 的 `parentSession`；读得到实时 agent 或宿主会话仓库里的实时会话
+  时自动补齐。于是进程重启、或子会话当前没有实时 agent 时，开关与 `/laa` 依旧显示父
+  会话的那一份状态。
+- **控制面快照新增 `inheritedFrom`**：非 null 时说明这是子会话，以及它跟随哪个顶层会话。
+
+### 变更
+
+- **子会话的遗留工作记在子会话自己名下**：峰时被拦下的输入与被中断的轮次不再记到父
+  会话头上，谷时回到**产生它们的那个会话**的 agent 上继续跑（此前会被投递给父代理，等于
+  把子会话的输入送进了错误的会话）。父会话的「等待谷时」计数因此只统计它自己的遗留工作。
+
+### 内部
+
+- `test/harness.js` 支持会话 header（`childHeader()`）：假 agent 现在可以像真实 DSH
+  一样带 `origin: 'subagent'` 与 `parentSession`，也可以用 `provide('sessions', …)`
+  模拟宿主会话仓库。
+- 新增 12 个用例：锚点解析（多级、自指、成环）、显示与拦截一致、子会话里的切换落到
+  父会话、遗留工作归属与谷时投递目标、谱系落盘与冷子会话、控制面读写、`/laa` 文案、
+  悬停提示的「跟随父会话」行。
+
 ## [0.2.1] - 2026-09-14
 
 ### 修复
@@ -76,7 +106,8 @@
   输入都跨重启存活；冷会话的遗留输入会保留到它下次变成实时会话。
 - 零运行时依赖：不 import 任何 `@deepseek-ai/*`，只用 Node 内建能力，无构建步骤。
 
-[Unreleased]: https://github.com/FireOpalus/dsh-laa/compare/v0.2.1...HEAD
+[Unreleased]: https://github.com/FireOpalus/dsh-laa/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/FireOpalus/dsh-laa/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/FireOpalus/dsh-laa/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/FireOpalus/dsh-laa/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/FireOpalus/dsh-laa/releases/tag/v0.1.0
