@@ -10,18 +10,26 @@ const BEIJING_MONDAY_PEAK = Date.UTC(2026, 8, 14, 2, 0); // 北京时间周一 1
 const BEIJING_MONDAY_VALLEY = Date.UTC(2026, 8, 14, 4, 30); // 北京时间周一 12:30
 const BEIJING_SATURDAY = Date.UTC(2026, 8, 19, 2, 0); // 北京时间周六 10:00
 
-/** 每个测试独占一个临时状态目录，避免相互干扰。 */
+/**
+ * 每个测试独占一个临时状态目录，避免相互干扰。
+ *
+ * 同步与异步的测试体都支持：异步时等它结束（含失败）再回收运行时与目录。
+ */
 function withHarness(options, body) {
   const directory = mkdtempSync(join(tmpdir(), 'dsh-laa-'));
-  try {
-    const harness = createRuntimeHarness({ statePath: join(directory, 'state.json'), ...options });
-    try {
-      return body(harness);
-    } finally {
-      harness.dispose();
-    }
-  } finally {
+  const harness = createRuntimeHarness({ statePath: join(directory, 'state.json'), ...options });
+  const finish = () => {
+    harness.dispose();
     rmSync(directory, { recursive: true, force: true });
+  };
+  try {
+    const result = body(harness);
+    if (result !== null && typeof result === 'object' && typeof result.then === 'function') return result.finally(finish);
+    finish();
+    return result;
+  } catch (error) {
+    finish();
+    throw error;
   }
 }
 
@@ -300,6 +308,55 @@ test('冷子会话（没有实时 agent）靠落盘的谱系跟随父会话', ()
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
+});
+
+test('升级前就存在的冷子会话：从宿主的会话清单里补一次谱系', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'dsh-laa-'));
+  try {
+    const statePath = join(directory, 'state.json');
+    /* 父会话的模式在，但谱系谁都没见过——正是升级后第一次打开老会话的样子。 */
+    writeFileSync(statePath, JSON.stringify({
+      version: 1,
+      sessions: { 'session-root': { enabled: true, updatedAt: 1 } },
+    }), 'utf8');
+    const harness = createRuntimeHarness({ statePath, now: BEIJING_MONDAY_PEAK });
+    try {
+      let scans = 0;
+      harness.provide('sessionQuery', {
+        listSessions: async () => {
+          scans += 1;
+          return [{ header: childHeader('session-child', 'session-root') }, { header: { id: 'session-root' } }];
+        },
+      });
+      assert.equal(harness.runtime.isEnabled('session-child'), false, '补谱系之前它只能看见自己');
+
+      assert.equal(await harness.runtime.hydrateLineage(), true);
+      assert.equal(harness.runtime.anchorOf('session-child'), 'session-root');
+      assert.equal(harness.runtime.isEnabled('session-child'), true);
+      assert.equal(harness.runtime.snapshot('session-child').inheritedFrom, 'session-root');
+
+      assert.equal(await harness.runtime.hydrateLineage(), false, '每个进程只扫一次清单');
+      assert.equal(scans, 1);
+    } finally {
+      harness.dispose();
+    }
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('会话清单读失败只是退回原判断，控制面照常工作', async () => {
+  await withHarness({ now: BEIJING_MONDAY_PEAK }, async (h) => {
+    h.provide('sessionQuery', { listSessions: async () => { throw new Error('boom'); } });
+    assert.equal(await h.runtime.hydrateLineage(), false);
+    assert.equal(h.runtime.isEnabled('session-child'), false);
+
+    /* 失败不被钉死：下一次还有机会补上。 */
+    h.provide('sessionQuery', { listSessions: async () => [{ header: childHeader('session-child', 'session-root') }] });
+    h.runtime.setEnabled('session-root', true);
+    assert.equal(await h.runtime.hydrateLineage(), true);
+    assert.equal(h.runtime.isEnabled('session-child'), true);
+  });
 });
 
 test('坏掉的谱系（自指或成环）不会让解析转不出来', () => {

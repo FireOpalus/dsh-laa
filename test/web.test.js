@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Readable } from 'node:stream';
@@ -193,6 +193,39 @@ test('webServer 出现后路由被挂载，且能把前缀下的请求交给同�
       await routes[0].handler(createRequest('POST', '/dsh-laa/mode', '{not json'), badJson);
       assert.equal(badJson.status, 400);
       assert.equal(JSON.parse(badJson.body).ok, false);
+    } finally {
+      harness.dispose();
+    }
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('控制面：冷子会话靠宿主会话清单补出的谱系跟随父会话', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'dsh-laa-route-'));
+  try {
+    const statePath = join(directory, 'state.json');
+    writeFileSync(statePath, JSON.stringify({
+      version: 1,
+      sessions: { 'session-root': { enabled: true, updatedAt: 1 } },
+    }), 'utf8');
+    const harness = createRuntimeHarness({ statePath, now: Date.UTC(2026, 8, 14, 2, 0) });
+    try {
+      const routes = [];
+      registerLaaRoutes(harness.ctx, harness.runtime);
+      harness.provide('webServer', { register: (route) => { routes.push(route); return () => {}; } });
+      harness.provide('sessionQuery', { listSessions: async () => [{ header: childHeader('session-child', 'session-root') }] });
+
+      const read = createResponse();
+      await routes[0].handler(createRequest('GET', '/dsh-laa/state?sessionId=session-child'), read);
+      const value = JSON.parse(read.body).value;
+      assert.equal(value.enabled, true, '补谱系之后按父会话回答');
+      assert.equal(value.inheritedFrom, 'session-root');
+
+      const off = createResponse();
+      await routes[0].handler(createRequest('POST', '/dsh-laa/mode', JSON.stringify({ sessionId: 'session-child', enabled: false })), off);
+      assert.equal(JSON.parse(off.body).value.enabled, false);
+      assert.equal(harness.runtime.isEnabled('session-root'), false, '写入也落在父会话上');
     } finally {
       harness.dispose();
     }
