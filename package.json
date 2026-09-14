@@ -1,6 +1,6 @@
 {
   "name": "dsh-laa",
-  "version": "0.3.1",
+  "version": "0.4.0",
   "description": "DSH 插件：为每个会话提供 LAA 模式——DeepSeek 峰时自动停止运行，谷时自动继续运行。",
   "type": "module",
   "main": "lib/index.js",

@@ -8,6 +8,30 @@
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-09-15
+
+### 新增
+
+- **峰谷切换有动静了**：相位真的翻过去时，开关会**跳三下**；开着 LAA 的时候轨道颜色用
+  1.26 秒平滑地在绿 <-> 琥珀之间推过去；并弹一条**浏览器通知**（`LAA · 进入峰时` /
+  `LAA · 进入谷时`，带会话标签，同一会话的播报互相顶替）。通知权限在用户点开关时
+  申请（浏览器要求用户手势），拒绝授权或浏览器没有该 API 都只是没有通知；
+  `prefers-reduced-motion` 下不播动画。（`lib/client.js`）
+- **`notify` 配置**：`enabled`（默认，只有开着 LAA 的会话才播报）/ `always` /
+  `off`，随快照一起交给前端；只影响通知，切换动画不受影响。
+  （`lib/laa.js`、`cordis.patch.yml`）
+- **按宿主边界对齐的刷新**：前端不再只靠 20 秒轮询——每次拿到快照就按 `nextChangeAt`
+  精确等一次（宿主在边界后约 1 秒重新评估，前端晚 2 秒去问），20 秒轮询退化为兜底，
+  用来追平标签页或系统休眠期间错过的切换。（`lib/client.js`）
+
+### 内部
+
+- `test/client.test.js` 新增有状态的假 React（`createStatefulReact`）：`setState` 会
+  重渲染，effect 由测试显式驱动，于是轮询、边界定时器与切换动画的收尾都可控；配套的
+  `unmount()` 负责跑清理——不卸载的话测试进程会被一个最长 30 分钟的真实定时器拖住。
+- 新增 6 个用例：切换时的动画类与通知内容、`notify` 三种策略、没有 Notification API
+  时不抛错、点开关时申请权限、`notify` 配置收敛、快照带 `notify`。
+
 ## [0.3.1] - 2026-09-14
 
 ### 修复
@@ -124,7 +148,8 @@
   输入都跨重启存活；冷会话的遗留输入会保留到它下次变成实时会话。
 - 零运行时依赖：不 import 任何 `@deepseek-ai/*`，只用 Node 内建能力，无构建步骤。
 
-[Unreleased]: https://github.com/FireOpalus/dsh-laa/compare/v0.3.1...HEAD
+[Unreleased]: https://github.com/FireOpalus/dsh-laa/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/FireOpalus/dsh-laa/compare/v0.3.1...v0.4.0
 [0.3.1]: https://github.com/FireOpalus/dsh-laa/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/FireOpalus/dsh-laa/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/FireOpalus/dsh-laa/compare/v0.2.0...v0.2.1
