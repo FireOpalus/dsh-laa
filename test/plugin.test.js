@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 
 import * as plugin from '../lib/index.js';
-import { baseConfig, createRuntimeHarness } from './harness.js';
+import { baseConfig, childHeader, createRuntimeHarness } from './harness.js';
 
 const BEIJING_MONDAY_PEAK = Date.UTC(2026, 8, 14, 2, 0); // 北京时间周一 10:00
 const BEIJING_MONDAY_VALLEY = Date.UTC(2026, 8, 14, 4, 30); // 北京时间周一 12:30
@@ -130,6 +130,37 @@ test('/laa 命令大小写与空白不敏感，谷时不提示暂存', () => {
 
     assert.equal(h.runCommand('laa', { agent, rawInput: 'Off' }).kind, 'success');
     assert.equal(runtime.isEnabled('session-a'), false);
+  });
+});
+
+test('/laa 在子会话里报告「跟随父会话」，并把开关写到父会话上', () => {
+  withPlugin({
+    now: BEIJING_MONDAY_PEAK,
+    prepare: (h) => {
+      h.agent('session-root');
+      h.agent('session-child', { owner: 'session-root', header: childHeader('session-child', 'session-root') });
+    },
+  }, (h, runtime) => {
+    const child = h.agent('session-child');
+
+    const status = h.runCommand('laa', { agent: child, rawInput: 'status' });
+    assert.equal(status.kind, 'success');
+    assert.match(status.text, /LAA 模式：关闭/);
+    assert.match(status.text, /跟随父会话：session-root（子会话与父会话共用同一个开关/);
+
+    const on = h.runCommand('laa', { agent: child, rawInput: 'on' });
+    assert.equal(on.kind, 'success');
+    assert.equal(runtime.isEnabled('session-root'), true, '子会话里的开启落在父会话上');
+    assert.equal(runtime.isEnabled('session-child'), true);
+    assert.equal(runtime.entryOf('session-child').updatedAt, 0, '子会话不保存自己的模式');
+
+    const off = h.runCommand('laa', { agent: child, rawInput: 'off' });
+    assert.match(off.text, /这是子会话：父会话 session-root 的开关已一并关闭/);
+    assert.equal(runtime.isEnabled('session-root'), false);
+
+    const root = h.runCommand('laa', { agent: h.agent('session-root'), rawInput: 'on' });
+    assert.match(root.text, /LAA 模式已开启/);
+    assert.doesNotMatch(root.text, /跟随父会话/, '顶层会话不该说自己跟随谁');
   });
 });
 

@@ -328,6 +328,65 @@ test('开启且处于峰时：开关滑到右侧、轨道变成峰时色，提�
   assert.equal(label.children, 'LAA');
 });
 
+test('子会话的悬停提示说明它跟随哪个父会话', async () => {
+  const state = {
+    sessionId: 'child',
+    enabled: true,
+    inheritedFrom: 'root',
+    phase: 'valley',
+    masterEnabled: true,
+    localNow: '2026-09-14 12:30（周一）',
+    localNextChange: '2026-09-14 14:00（周一）',
+    peakWindows: '周一至周五 09:00-12:00',
+    timeZone: 'Asia/Shanghai',
+    deferred: 0,
+    suspended: false,
+  };
+  const { exports } = await loadBundle(createReact([state, false, '']));
+  const client = createClientContext();
+  exports.apply(client.ctx);
+  const zh = client.dictionaries[0].dict.zh;
+  const t = (key) => zh[key] ?? key;
+
+  // 名册里查得到标题：提示里显示「标题（id）」。
+  const roster = { ids: ['root'], byId: { root: { id: 'root', displayTitle: '重构会话' } }, current: 'child' };
+  const named = client.registrations[0].component({ sessionId: 'child', t, useSessions: (selector) => selector(roster) });
+  assert.match(named.props.title, /跟随父会话：重构会话（root）/);
+
+  // 名册缺席或查不到：退回会话 id，提示里始终是一个对得上的身份。
+  // （假 React 的 useState 是「按调用次数发牌」的，所以另开一份 bundle 实例。）
+  const fallback = await loadBundle(createReact([state, false, '']));
+  const bareClient = createClientContext();
+  fallback.exports.apply(bareClient.ctx);
+  const bare = bareClient.registrations[0].component({ sessionId: 'child', t });
+  assert.match(bare.props.title, /跟随父会话：root/);
+  assert.match(bare.props.title, /^LAA 已开启$/m);
+});
+
+test('顶层会话的悬停提示里没有「跟随父会话」这一行', async () => {
+  const state = {
+    sessionId: 'root',
+    enabled: true,
+    inheritedFrom: null,
+    phase: 'valley',
+    masterEnabled: true,
+    localNow: '2026-09-14 12:30（周一）',
+    localNextChange: '2026-09-14 14:00（周一）',
+    peakWindows: '周一至周五 09:00-12:00',
+    timeZone: 'Asia/Shanghai',
+    deferred: 0,
+    suspended: false,
+  };
+  const { exports } = await loadBundle(createReact([state, false, '']));
+  const client = createClientContext();
+  exports.apply(client.ctx);
+  const zh = client.dictionaries[0].dict.zh;
+  const element = client.registrations[0].component({ sessionId: 'root', t: (key) => zh[key] ?? key });
+
+  assert.doesNotMatch(element.props.title, /跟随父会话/);
+  assert.match(element.props.title, /^LAA 已开启$/m);
+});
+
 test('单击开关会把新状态 POST 给控制面', async () => {
   const state = {
     sessionId: 's1',

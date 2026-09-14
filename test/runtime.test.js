@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 
-import { RESUME_FRAMING, createRuntimeHarness } from './harness.js';
+import { RESUME_FRAMING, childHeader, createRuntimeHarness } from './harness.js';
 
 const BEIJING_MONDAY_PEAK = Date.UTC(2026, 8, 14, 2, 0); // 北京时间周一 10:00
 const BEIJING_MONDAY_VALLEY = Date.UTC(2026, 8, 14, 4, 30); // 北京时间周一 12:30
@@ -168,6 +168,150 @@ test('子代理继承所属会话的模式', () => {
     h.runtime.start();
     const decision = h.runtime.preStep({ agent: child, turn: 1, step: 1, messages: [] }, () => ({ kind: 'enter', messages: [] }));
     assert.deepEqual(decision, { kind: 'reject' });
+  });
+});
+
+test('子会话沿谱系跟随父会话：锚点、显示与拦截三者一致', () => {
+  withHarness({ now: BEIJING_MONDAY_PEAK }, (h) => {
+    h.runtime.setEnabled('session-root', true);
+    const child = h.agent('session-child', { owner: 'session-root', header: childHeader('session-child', 'session-root') });
+    h.runtime.start();
+
+    assert.equal(h.runtime.anchorOf('session-child'), 'session-root');
+    assert.equal(h.runtime.anchorOf('session-root'), 'session-root', '顶层会话是自己的锚点');
+    assert.equal(h.runtime.isEnabled('session-child'), true);
+
+    const snapshot = h.runtime.snapshot('session-child');
+    assert.equal(snapshot.enabled, true, '子会话显示的模式与父会话一致');
+    assert.equal(snapshot.inheritedFrom, 'session-root');
+    assert.equal(h.runtime.snapshot('session-root').inheritedFrom, null, '顶层会话不显示“跟随父会话”');
+
+    const decision = h.runtime.preStep({ agent: child, turn: 1, step: 1, messages: [] }, () => ({ kind: 'enter', messages: [] }));
+    assert.deepEqual(decision, { kind: 'reject' });
+  });
+});
+
+test('在子会话里切换开关改的是父会话，子会话不落自己的模式', () => {
+  withHarness({ now: BEIJING_SATURDAY }, (h) => {
+    h.agent('session-root');
+    h.agent('session-child', { owner: 'session-root', header: childHeader('session-child', 'session-root') });
+
+    h.runtime.setEnabled('session-child', true);
+    assert.equal(h.runtime.isEnabled('session-root'), true, '子会话里的开启落到父会话上');
+    assert.equal(h.runtime.isEnabled('session-child'), true);
+    assert.equal(h.runtime.entryOf('session-child').updatedAt, 0, '子会话不保存自己的模式');
+    assert.notEqual(h.runtime.entryOf('session-root').updatedAt, 0);
+
+    h.runtime.setEnabled('session-child', false);
+    assert.equal(h.runtime.isEnabled('session-root'), false);
+    assert.equal(h.runtime.isEnabled('session-child'), false);
+  });
+});
+
+test('父会话关掉 LAA 之后，子会话立刻恢复放行', () => {
+  withHarness({ now: BEIJING_MONDAY_PEAK }, (h) => {
+    h.runtime.setEnabled('session-root', true);
+    const child = h.agent('session-child', { owner: 'session-root', header: childHeader('session-child', 'session-root') });
+    h.runtime.start();
+    assert.deepEqual(h.runtime.preStep({ agent: child, turn: 1, step: 1, messages: [] }, () => ({ kind: 'enter', messages: [] })), { kind: 'reject' });
+
+    h.runtime.setEnabled('session-root', false);
+    let downstreamRan = false;
+    h.runtime.preStep({ agent: child, turn: 2, step: 1, messages: [] }, () => {
+      downstreamRan = true;
+      return { kind: 'enter', messages: [] };
+    });
+    assert.equal(downstreamRan, true);
+  });
+});
+
+test('子会话被拦下的输入记在子会话名下，谷时投递给子代理而不是父代理', () => {
+  withHarness({ now: BEIJING_MONDAY_PEAK }, (h) => {
+    h.runtime.setEnabled('session-root', true);
+    h.agent('session-root');
+    const child = h.agent('session-child', { owner: 'session-root', header: childHeader('session-child', 'session-root') });
+    h.runtime.start();
+
+    h.runtime.preStep({
+      agent: child,
+      turn: 1,
+      step: 1,
+      messages: [{ id: 'm1', role: 'user', content: [{ type: 'text', text: '把子任务做完' }], source: { kind: 'user' } }],
+    }, () => ({ kind: 'enter', messages: [] }));
+    assert.equal(h.entry('session-child').deferred.length, 1);
+    assert.equal(h.entry('session-root').deferred.length, 0, '父会话不该替子会话背这笔账');
+
+    h.setNow(BEIJING_MONDAY_VALLEY);
+    h.runtime.evaluate();
+    assert.equal(h.followups('session-child').length, 1, '输入回到产生它的子会话');
+    assert.equal(h.followups('session-child')[0].content[0].text, '把子任务做完');
+    assert.equal(h.followups('session-root').length, 0, '不能把子会话的输入投给父代理');
+  });
+});
+
+test('多级子会话沿谱系一路找到顶层会话', () => {
+  withHarness({ now: BEIJING_MONDAY_PEAK }, (h) => {
+    h.runtime.setEnabled('session-root', true);
+    h.agent('session-mid', { owner: 'session-root', header: childHeader('session-mid', 'session-root') });
+    const leaf = h.agent('session-leaf', { owner: 'session-mid', header: childHeader('session-leaf', 'session-mid') });
+    h.runtime.start();
+
+    assert.equal(h.runtime.anchorOf('session-leaf'), 'session-root');
+    assert.equal(h.runtime.isEnabled('session-leaf'), true);
+    assert.deepEqual(h.runtime.preStep({ agent: leaf, turn: 1, step: 1, messages: [] }, () => ({ kind: 'enter', messages: [] })), { kind: 'reject' });
+  });
+});
+
+test('看到过一次子代理就把谱系记下来，哪怕它还没进注册表、LAA 也没开', () => {
+  withHarness({ now: BEIJING_SATURDAY }, (h) => {
+    /* 直接交给 adopt 的 agent：`agent/created` 触发时它未必已经能被查到。 */
+    h.runtime.adopt({
+      id: 'session-child',
+      status: 'idle',
+      session: { id: 'session-child', header: childHeader('session-child', 'session-root') },
+    });
+    h.runtime.dispose();
+    const document = JSON.parse(readFileSync(h.statePath, 'utf8'));
+    assert.deepEqual(document.lineage, { 'session-child': 'session-root' });
+  });
+});
+
+test('冷子会话（没有实时 agent）靠落盘的谱系跟随父会话', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'dsh-laa-'));
+  try {
+    const statePath = join(directory, 'state.json');
+    writeFileSync(statePath, JSON.stringify({
+      version: 1,
+      sessions: { 'session-root': { enabled: true, updatedAt: 1 } },
+      lineage: { 'session-child': 'session-root' },
+    }), 'utf8');
+    const harness = createRuntimeHarness({ statePath, now: BEIJING_MONDAY_PEAK });
+    try {
+      assert.equal(harness.runtime.anchorOf('session-child'), 'session-root');
+      assert.equal(harness.runtime.isEnabled('session-child'), true);
+      assert.equal(harness.runtime.snapshot('session-child').inheritedFrom, 'session-root');
+
+      /* 冷会话里的切换同样落到父会话上 */
+      harness.runtime.setEnabled('session-child', false);
+      assert.equal(harness.runtime.isEnabled('session-root'), false);
+    } finally {
+      harness.dispose();
+    }
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('坏掉的谱系（自指或成环）不会让解析转不出来', () => {
+  withHarness({ now: BEIJING_SATURDAY }, (h) => {
+    h.agent('session-self', { header: { id: 'session-self', origin: 'subagent', parentSession: 'session-self' } });
+    assert.equal(h.runtime.anchorOf('session-self'), 'session-self');
+
+    h.runtime.setEnabled('session-a', true);
+    h.agent('session-a', { header: childHeader('session-a', 'session-b') });
+    h.agent('session-b', { header: childHeader('session-b', 'session-a') });
+    assert.equal(h.runtime.anchorOf('session-a'), 'session-a');
+    assert.equal(h.runtime.isEnabled('session-a'), true);
   });
 });
 

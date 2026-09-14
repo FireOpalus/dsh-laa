@@ -6,7 +6,7 @@ import { Readable } from 'node:stream';
 import { test } from 'node:test';
 
 import { handleRoute, registerLaaRoutes, ROUTE_PREFIX } from '../lib/web.js';
-import { createRuntimeHarness } from './harness.js';
+import { childHeader, createRuntimeHarness } from './harness.js';
 
 /** 一个测试独占一个临时状态目录。 */
 function withRuntime(body) {
@@ -78,6 +78,25 @@ test('POST /mode 打开与关闭一个会话的 LAA 模式', () => {
     const off = handleRoute(runtime, 'POST', 'mode', undefined, { sessionId: 's1', enabled: false });
     assert.equal(off.payload.value.enabled, false);
     assert.equal(runtime.isEnabled('s1'), false);
+  });
+});
+
+test('控制面：子会话读到父会话的模式，写入也落在父会话上', () => {
+  withRuntime((harness, runtime) => {
+    /* 宿主会话仓库里的实时会话对象带着子会话的谱系（origin + parentSession）。 */
+    harness.provide('sessions', {
+      get: (id) => (id === 'session-child' ? { header: childHeader('session-child', 'session-root') } : undefined),
+    });
+    runtime.setEnabled('session-root', true);
+
+    const state = handleRoute(runtime, 'GET', 'state', query({ sessionId: 'session-child' }), undefined);
+    assert.equal(state.payload.value.enabled, true, '子会话显示的模式与父会话一致');
+    assert.equal(state.payload.value.inheritedFrom, 'session-root');
+
+    const off = handleRoute(runtime, 'POST', 'mode', undefined, { sessionId: 'session-child', enabled: false });
+    assert.equal(off.payload.value.enabled, false);
+    assert.equal(runtime.isEnabled('session-root'), false, '子会话里的关闭改的是父会话');
+    assert.equal(runtime.entryOf('session-child').updatedAt, 0);
   });
 });
 

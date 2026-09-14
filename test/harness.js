@@ -12,6 +12,18 @@ import { RESUME_FRAMING, createLaaRuntime } from '../lib/laa.js';
 
 export { RESUME_FRAMING };
 
+/**
+ * 一个子会话的会话 header。
+ *
+ * DSH 的 subagent 子会话就是这样被创建的：`origin` 标记它是子会话，
+ * `parentSession` 指向派发它的那个会话——插件沿这条链找顶层会话。
+ * @param id - 子会话 id。
+ * @param parentSession - 父会话 id。
+ */
+export function childHeader(id, parentSession) {
+  return { id, origin: 'subagent', parentSession };
+}
+
 /** 缺省配置：北京时间、官方峰时窗口、测试期间不落盘抖动。 */
 export function baseConfig(statePath) {
   return {
@@ -107,18 +119,24 @@ export function createRuntimeHarness({ statePath, now, manual = false, config = 
     }
   }
 
-  /** 造一个假 agent；同一个 id 重复调用会复用并更新状态。 */
+  /**
+   * 造一个假 agent；同一个 id 重复调用会复用并更新状态。
+   * @param options.owner - 运行时父代理的 id（子代理）。
+   * @param options.header - 会话 header；DSH 把子会话的 `origin: 'subagent'` 与
+   *   `parentSession` 记在这里，用 {@link childHeader} 造一个。
+   */
   function agent(id, options = {}) {
     const existing = agents.find((candidate) => candidate.id === id);
     if (existing !== undefined) {
       if (options.status !== undefined) existing.status = options.status;
+      if (options.header !== undefined) existing.session.header = options.header;
       return existing;
     }
     const record = {
       id,
       owner: options.owner,
       status: options.status ?? 'idle',
-      session: { id },
+      session: options.header === undefined ? { id } : { id, header: options.header },
       cancelCalls: [],
       followupCalls: [],
       cancel(cause, cancelOptions) {
@@ -149,6 +167,7 @@ export function createRuntimeHarness({ statePath, now, manual = false, config = 
   return {
     ctx,
     logs,
+    statePath,
     get runtime() {
       if (current === undefined) throw new Error('harness: no runtime was created (manual mode)');
       return current;
