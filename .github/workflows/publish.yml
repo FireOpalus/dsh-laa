@@ -1,0 +1,42 @@
+# 由 npm trusted publishing（OIDC）驱动：推送到 v* 标签即自动发布，无需任何 npm 令牌。
+#
+# 前置配置（npm 侧，已完成）：npmjs.com → Packages → dsh-laa → Settings →
+# Trusted publishing 里绑定 FireOpalus/dsh-laa 的 publish.yml。
+#
+# 注意：本仓库零运行时依赖、没有 package-lock.json，因此不要加 `npm ci`——
+# 它会直接失败。测试用 `npm test`（node --test）即可。
+
+name: Publish Package
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  id-token: write   # OIDC，trusted publishing 必需；缺了会报 ENEEDAUTH
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'   # package.json engines: ^22.19.0 || >=24.0.0
+          registry-url: 'https://registry.npmjs.org'
+          package-manager-cache: false   # 发布构建不要用缓存
+
+      - name: 校验标签与 package.json 版本一致
+        run: |
+          expected="v$(node -p 'require("./package.json").version')"
+          if [ "$expected" != "$GITHUB_REF_NAME" ]; then
+            echo "标签 $GITHUB_REF_NAME 与 package.json 版本 $expected 不一致，拒绝发布"
+            exit 1
+          fi
+
+      - run: npm test
+
+      - run: npm publish   # OIDC 自动生效，provenance 自动附加
