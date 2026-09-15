@@ -82,6 +82,22 @@ test('POST /mode 打开与关闭一个会话的 LAA 模式', () => {
   });
 });
 
+test('控制面：POST /mode off 把暂存的输入当刻发出去', () => {
+  withRuntime((harness, runtime) => {
+    const agent = harness.agent('s1');
+    runtime.setEnabled('s1', true);
+    runtime.defer('s1', [{ at: 1, content: [{ type: 'text', text: '别压着' }], source: { kind: 'user' } }]);
+
+    const off = handleRoute(runtime, 'POST', 'mode', undefined, { sessionId: 's1', enabled: false });
+    assert.equal(off.status, 200);
+    assert.equal(off.payload.value.enabled, false);
+    assert.equal(off.payload.value.deferred, 0, '快照里不再有待投递的输入');
+    assert.equal(off.payload.value.suspended, false);
+    assert.equal(agent.followupCalls.length, 1);
+    assert.equal(agent.followupCalls[0].content[0].text, '别压着');
+  });
+});
+
 test('控制面：子会话读到父会话的模式，写入也落在父会话上', () => {
   withRuntime((harness, runtime) => {
     /* 宿主会话仓库里的实时会话对象带着子会话的谱系（origin + parentSession）。 */

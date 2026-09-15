@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 
-import { RESUME_FRAMING, childHeader, createRuntimeHarness } from './harness.js';
+import { DISABLE_FRAMING, RESUME_FRAMING, childHeader, createRuntimeHarness } from './harness.js';
 
 const BEIJING_MONDAY_PEAK = Date.UTC(2026, 8, 14, 2, 0); // 北京时间周一 10:00
 const BEIJING_MONDAY_VALLEY = Date.UTC(2026, 8, 14, 4, 30); // 北京时间周一 12:30
@@ -356,6 +356,90 @@ test('会话清单读失败只是退回原判断，控制面照常工作', async
     h.runtime.setEnabled('session-root', true);
     assert.equal(await h.runtime.hydrateLineage(), true);
     assert.equal(h.runtime.isEnabled('session-child'), true);
+  });
+});
+
+test('关闭 LAA：压着的输入当刻发出去，续跑提示词说的是「关掉了」而不是「谷时到了」', () => {
+  withHarness({ now: BEIJING_MONDAY_PEAK }, (h) => {
+    h.runtime.setEnabled('session-a', true);
+    const agent = h.agent('session-a', { status: 'running' });
+    h.runtime.start(); // 峰时：中断正在跑的轮次
+    assert.equal(h.entry('session-a').suspended, true);
+
+    h.runtime.preStep({
+      agent,
+      turn: 2,
+      step: 1,
+      messages: [{ id: 'm1', role: 'user', content: [{ type: 'text', text: '接着做' }], source: { kind: 'user' } }],
+    }, () => ({ kind: 'enter', messages: [] }));
+    assert.equal(h.entry('session-a').deferred.length, 1);
+
+    const { entry, released } = h.runtime.setEnabled('session-a', false);
+    assert.equal(entry.enabled, false);
+    assert.deepEqual(released, { sessions: 1, delivered: 1, waiting: 0 });
+
+    const delivered = h.followups('session-a');
+    assert.equal(delivered.length, 2);
+    assert.equal(delivered[0].content[0].text, DISABLE_FRAMING);
+    assert.equal(delivered[0].source.plugin, 'laa');
+    assert.equal(delivered[1].content[0].text, '接着做');
+    assert.equal(h.entry('session-a').deferred.length, 0);
+    assert.equal(h.entry('session-a').suspended, false);
+  });
+});
+
+test('关闭 LAA：没有实时 agent 的会话交不出去，等它下次变成实时会话时发出去', () => {
+  withHarness({ now: BEIJING_MONDAY_PEAK }, (h) => {
+    h.runtime.setEnabled('session-cold', true);
+    h.runtime.defer('session-cold', [
+      { at: h.now(), content: [{ type: 'text', text: '别丢' }], source: { kind: 'user' } },
+    ]);
+
+    const { released } = h.runtime.setEnabled('session-cold', false);
+    assert.deepEqual(released, { sessions: 0, delivered: 0, waiting: 1 }, '没有实时 agent 就只能等');
+    assert.equal(h.entry('session-cold').deferred.length, 1, '输入一条都不能丢');
+
+    /* 会话下次变成实时会话（agent/created -> adopt）时立刻发出去 */
+    h.runtime.adopt(h.agent('session-cold'));
+    assert.equal(h.followups('session-cold').length, 1);
+    assert.equal(h.followups('session-cold')[0].content[0].text, '别丢');
+    assert.equal(h.entry('session-cold').deferred.length, 0);
+  });
+});
+
+test('关闭 LAA：整棵树一起交出去，从子会话关也一样', () => {
+  withHarness({ now: BEIJING_MONDAY_PEAK }, (h) => {
+    h.runtime.setEnabled('session-root', true);
+    const root = h.agent('session-root');
+    const child = h.agent('session-child', { owner: 'session-root', header: childHeader('session-child', 'session-root') });
+    h.runtime.start();
+
+    h.runtime.preStep({ agent: root, turn: 1, step: 1, messages: [{ id: 'm1', role: 'user', content: [{ type: 'text', text: '父的活' }], source: { kind: 'user' } }] }, () => ({ kind: 'enter', messages: [] }));
+    h.runtime.preStep({ agent: child, turn: 1, step: 1, messages: [{ id: 'm2', role: 'user', content: [{ type: 'text', text: '子的活' }], source: { kind: 'user' } }] }, () => ({ kind: 'enter', messages: [] }));
+
+    const { released } = h.runtime.setEnabled('session-child', false);
+    assert.deepEqual(released, { sessions: 2, delivered: 2, waiting: 0 });
+    assert.equal(h.followups('session-root')[0].content[0].text, '父的活');
+    assert.equal(h.followups('session-child')[0].content[0].text, '子的活');
+  });
+});
+
+test('关闭 LAA 只影响这一棵树：别的会话攒下的输入继续等谷时', () => {
+  withHarness({ now: BEIJING_MONDAY_PEAK }, (h) => {
+    h.runtime.setEnabled('session-a', true);
+    h.runtime.setEnabled('session-b', true);
+    const a = h.agent('session-a');
+    const b = h.agent('session-b');
+    h.runtime.start();
+
+    h.runtime.preStep({ agent: a, turn: 1, step: 1, messages: [{ id: 'm1', role: 'user', content: [{ type: 'text', text: 'a 的活' }], source: { kind: 'user' } }] }, () => ({ kind: 'enter', messages: [] }));
+    h.runtime.preStep({ agent: b, turn: 1, step: 1, messages: [{ id: 'm2', role: 'user', content: [{ type: 'text', text: 'b 的活' }], source: { kind: 'user' } }] }, () => ({ kind: 'enter', messages: [] }));
+
+    const { released } = h.runtime.setEnabled('session-a', false);
+    assert.deepEqual(released, { sessions: 1, delivered: 1, waiting: 0 });
+    assert.equal(h.followups('session-a').length, 1);
+    assert.equal(h.followups('session-b').length, 0, '另一棵树不受影响');
+    assert.equal(h.entry('session-b').deferred.length, 1);
   });
 });
 

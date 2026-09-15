@@ -111,8 +111,12 @@ test('/laa 命令：切换开关、报告峰谷相位与待恢复数量', () => 
     assert.equal(runtime.entryOf('session-a').deferred.length, 1);
 
     const disabled = h.runCommand('laa', { agent, rawInput: 'off' });
+    assert.equal(disabled.kind, 'success');
     assert.match(disabled.text, /LAA 模式已关闭/);
-    assert.match(disabled.text, /不会再自动恢复/);
+    assert.match(disabled.text, /压着的工作已经发出去：1 个会话、1 条输入/, '关闭时把暂存的输入发了出去');
+    assert.equal(h.followups('session-a').length, 1);
+    assert.equal(h.followups('session-a')[0].content[0].text, 'x');
+    assert.equal(runtime.entryOf('session-a').deferred.length, 0);
 
     const bogus = h.runCommand('laa', { agent, rawInput: 'maybe' });
     assert.equal(bogus.kind, 'error');

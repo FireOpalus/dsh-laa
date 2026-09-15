@@ -8,9 +8,9 @@
  */
 
 import { DEFAULT_PEAK_WINDOWS } from '../lib/pricing.js';
-import { RESUME_FRAMING, createLaaRuntime } from '../lib/laa.js';
+import { DISABLE_FRAMING, RESUME_FRAMING, createLaaRuntime } from '../lib/laa.js';
 
-export { RESUME_FRAMING };
+export { DISABLE_FRAMING, RESUME_FRAMING };
 
 /**
  * 一个子会话的会话 header。
