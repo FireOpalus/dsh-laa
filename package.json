@@ -44,7 +44,16 @@
     "peak",
     "scheduling"
   ],
+  "author": "Boiser",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/FireOpalus/dsh-laa.git"
+  },
+  "bugs": {
+    "url": "https://github.com/FireOpalus/dsh-laa/issues"
+  },
+  "homepage": "https://github.com/FireOpalus/dsh-laa#readme",
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"
