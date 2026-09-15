@@ -8,6 +8,30 @@
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-09-15
+
+### 变更
+
+- **关掉 LAA 时，压着的输入当刻发出去**：以前 `/laa off`（或点开关）只是把模式关掉，
+  峰时攒下的输入会一直躺在状态文件里等谷时——而模式已经关了，谷时也不会再自动投递。
+  现在关闭动作会**立刻**把整棵会话树（父会话 + 所有子会话）压着的工作交给各自的实时
+  agent：被中断过的轮次先收到一条续跑提示词，随后是攒下的输入、按原顺序。
+  （`lib/laa.js`）
+- **续跑提示词分两种**：谷时继续用 `[LAA MODE — OFF-PEAK WINDOW OPENED]`，因为「人把
+  LAA 关了」而投递的用新的 `[LAA MODE — TURNED OFF]`——措辞必须对得上，否则模型会
+  以为自己正处在谷时窗口里。
+- **当时没有实时 agent 的会话不丢输入**：交不出去的留在状态里，等它下一次变成实时会话
+  （`agent/created`）时立刻投递；`adopt` 因此不再要求模式开着。
+- **`/laa off` 的输出改写**：报告这次发出去几个会话、几条输入，以及还有几个会话在等
+  实时 agent（不再说「关闭后不会再自动恢复」）。
+- `setEnabled()` 现在返回 `{ entry, released }`，把「关掉时交出去多少」一并交给命令层。
+
+### 内部
+
+- 新增 5 个用例：关闭时当刻投递（含提示词区分）、没有实时 agent 时留待下次运行、
+  整棵树一起交（从子会话关也一样）、只影响自己这棵树、控制面 `POST /mode off` 的投递；
+  `/laa off` 的既有用例改为断言新的输出。
+
 ## [0.4.0] - 2026-09-15
 
 ### 新增
@@ -148,7 +172,8 @@
   输入都跨重启存活；冷会话的遗留输入会保留到它下次变成实时会话。
 - 零运行时依赖：不 import 任何 `@deepseek-ai/*`，只用 Node 内建能力，无构建步骤。
 
-[Unreleased]: https://github.com/FireOpalus/dsh-laa/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/FireOpalus/dsh-laa/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/FireOpalus/dsh-laa/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/FireOpalus/dsh-laa/compare/v0.3.1...v0.4.0
 [0.3.1]: https://github.com/FireOpalus/dsh-laa/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/FireOpalus/dsh-laa/compare/v0.2.1...v0.3.0
