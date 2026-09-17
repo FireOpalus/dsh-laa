@@ -8,6 +8,31 @@
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-09-15
+
+### 新增
+
+- **峰时只拦按峰谷计费的提供方**：只有 `peakProviders` 里的提供方路由（默认
+  `['deepseek-official']`，即 DeepSeek 官方）会在峰时被停下/拒绝；其它路由——自建网关、
+  第三方中转、别家模型——没有峰谷定价，峰时照跑，一个请求都不会被拦。路由按「会话最近
+  一次请求的记录头（`session.requestHeader()`）→ agent 创建时的路由 → 部署默认路由」
+  三级回退解析，因此会话中途换模型也会立刻跟上；读不到路由时按「按峰谷计费」保守处理
+  （宁可多等，不漏拦）。（`lib/laa.js`）
+- **`peakProviders` 配置**：默认 `['deepseek-official']`，可换清单、可清空（清空 =
+  峰时谁都不拦，谷时的重放语义仍然保留）；`GET /health` 会回报当前清单。
+  （`lib/laa.js`、`lib/web.js`、`cordis.patch.yml`）
+- **快照带上路由信息**：`provider`（当前路由 id，读不到为 `null`）与 `peakBilled`
+  （是否受峰时约束）；开关的悬停提示在不受约束时多一行「峰时不会阻塞：这个提供方不按
+  峰谷计费（<provider>）」。（`lib/laa.js`、`lib/client.js`）
+
+### 内部
+
+- 假宿主支持 `provider` / `loggedProvider`，可以造出「创建时是 A、最近一次请求走 B」
+  的 agent，以及没有实时 agent 时用部署默认路由的情况。
+- 新增 7 个用例：deepseek-official 照旧被拦、别的提供方峰时不拦也不停、中途换模型以
+  记录头为准、没发过请求时用部署默认路由、读不到路由时保守拦、`peakProviders` 的三种
+  取值、悬停提示里的「峰时不会阻塞」行。
+
 ## [0.5.0] - 2026-09-15
 
 ### 变更
@@ -172,7 +197,8 @@
   输入都跨重启存活；冷会话的遗留输入会保留到它下次变成实时会话。
 - 零运行时依赖：不 import 任何 `@deepseek-ai/*`，只用 Node 内建能力，无构建步骤。
 
-[Unreleased]: https://github.com/FireOpalus/dsh-laa/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/FireOpalus/dsh-laa/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/FireOpalus/dsh-laa/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/FireOpalus/dsh-laa/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/FireOpalus/dsh-laa/compare/v0.3.1...v0.4.0
 [0.3.1]: https://github.com/FireOpalus/dsh-laa/compare/v0.3.0...v0.3.1
