@@ -7,10 +7,10 @@
 # `404 Not Found - PUT https://registry.npmjs.org/dsh-laa`：
 #
 # 1. **不要给 setup-node 传 `registry-url`**。它会往 runner 的 ~/.npmrc 写
-#    `//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}`，并从一个 `token:` 输入
-#    （默认 ${{ github.token }}）导出 NODE_AUTH_TOKEN；npm 于是拿着这个假凭据去发布，
-#    注册中心回 404，OIDC 根本没机会生效（actions/setup-node#1440）。下面还在发布步骤
-#    显式把 NODE_AUTH_TOKEN 置空，双保险。
+#    `//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}`；npm 于是拿着这个（空的）凭据
+#    去发布，注册中心回 404，OIDC 根本没机会生效（actions/setup-node#1440）。
+#    同理，**也不要设置 NODE_AUTH_TOKEN —— 哪怕设成空串**：npm 只要看到这个变量存在就先走
+#    token 认证并报 `ENEEDAUTH`，同样轮不到 OIDC。发布前 unset 掉它才是正解。
 # 2. **npm 必须 ≥ 11.5.1**（trusted publishing 的 OIDC 支持）。Node 24 自带的 npm 满足，
 #    下面仍然显式断言一次，免得将来降到旧 Node 又变成「发了个 404」。
 #
@@ -56,6 +56,9 @@ jobs:
       - run: npm test
 
       - name: 发布到 npm（trusted publishing；provenance 自动附加）
-        run: npm publish
-        env:
-          NODE_AUTH_TOKEN: ''
+        run: |
+          # trusted publishing 的前提是「根本没有凭据」：NODE_AUTH_TOKEN 哪怕只是空串，
+          # npm 也会先走 token 认证并报 ENEEDAUTH。所以这里把它整个 unset 掉。
+          unset NODE_AUTH_TOKEN
+          unset NPM_TOKEN
+          npm publish
