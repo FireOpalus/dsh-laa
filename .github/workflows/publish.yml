@@ -55,10 +55,20 @@ jobs:
 
       - run: npm test
 
+      - name: 确认 OIDC 环境可用
+        run: |
+          if [ -n "$ACTIONS_ID_TOKEN_REQUEST_URL" ] && [ -n "$ACTIONS_ID_TOKEN_REQUEST_TOKEN" ]; then
+            echo "OIDC 可用：id-token: write 生效"
+          else
+            echo "没有 OIDC 环境变量，说明 id-token: write 没生效；trusted publishing 走不通"
+            exit 1
+          fi
+
       - name: 发布到 npm（trusted publishing；provenance 自动附加）
         run: |
           # trusted publishing 的前提是「根本没有凭据」：NODE_AUTH_TOKEN 哪怕只是空串，
           # npm 也会先走 token 认证并报 ENEEDAUTH。所以这里把它整个 unset 掉。
           unset NODE_AUTH_TOKEN
           unset NPM_TOKEN
-          npm publish
+          # --provenance 才是触发 OIDC 交换的那个开关（npm 需要它来决定去取 ID token）。
+          npm publish --provenance
