@@ -3,6 +3,17 @@
 # 前置配置（npm 侧，已完成）：npmjs.com → Packages → dsh-laa → Settings →
 # Trusted publishing 里绑定 FireOpalus/dsh-laa 的 publish.yml。
 #
+# 两个必须遵守的坑——v0.6.0 的第一次发布就栽在这里，报的是误导性的
+# `404 Not Found - PUT https://registry.npmjs.org/dsh-laa`：
+#
+# 1. **不要给 setup-node 传 `registry-url`**。它会往 runner 的 ~/.npmrc 写
+#    `//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}`，并从一个 `token:` 输入
+#    （默认 ${{ github.token }}）导出 NODE_AUTH_TOKEN；npm 于是拿着这个假凭据去发布，
+#    注册中心回 404，OIDC 根本没机会生效（actions/setup-node#1440）。下面还在发布步骤
+#    显式把 NODE_AUTH_TOKEN 置空，双保险。
+# 2. **npm 必须 ≥ 11.5.1**（trusted publishing 的 OIDC 支持）。Node 24 自带的 npm 满足，
+#    下面仍然显式断言一次，免得将来降到旧 Node 又变成「发了个 404」。
+#
 # 注意：本仓库零运行时依赖、没有 package-lock.json，因此不要加 `npm ci`——
 # 它会直接失败。测试用 `npm test`（node --test）即可。
 
@@ -26,8 +37,13 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: '24'   # package.json engines: ^22.19.0 || >=24.0.0
-          registry-url: 'https://registry.npmjs.org'
           package-manager-cache: false   # 发布构建不要用缓存
+
+      - name: 校验 npm 版本（trusted publishing 需要 >= 11.5.1）
+        run: |
+          version="$(npm --version)"
+          echo "npm $version"
+          node -e 'const [maj, min, pat] = process.argv[1].split(".").map(Number); if (maj < 11 || (maj === 11 && (min < 5 || (min === 5 && pat < 1)))) { console.error("npm " + process.argv[1] + " 太旧：trusted publishing 需要 >= 11.5.1"); process.exit(1); }' "$version"
 
       - name: 校验标签与 package.json 版本一致
         run: |
@@ -39,4 +55,7 @@ jobs:
 
       - run: npm test
 
-      - run: npm publish   # OIDC 自动生效，provenance 自动附加
+      - name: 发布到 npm（trusted publishing；provenance 自动附加）
+        run: npm publish
+        env:
+          NODE_AUTH_TOKEN: ''
