@@ -70,5 +70,6 @@ jobs:
           # npm 也会先走 token 认证并报 ENEEDAUTH。所以这里把它整个 unset 掉。
           unset NODE_AUTH_TOKEN
           unset NPM_TOKEN
-          # --provenance 才是触发 OIDC 交换的那个开关（npm 需要它来决定去取 ID token）。
-          npm publish --provenance
+          # OIDC 交换失败会被 npm 静默吞掉（只写 verbose 日志），最终只报 ENEEDAUTH，
+          # 所以这里开 verbose：日志里能看到到底是「没取到 ID token」还是「交换被注册中心拒绝」。
+          npm publish --provenance --loglevel=verbose
