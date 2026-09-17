@@ -28,6 +28,10 @@
         # 峰谷切换时的浏览器通知策略：enabled（只有开着 LAA 的会话才播报）/ always / off。
         # 开关上「跳三下 + 平滑变色」的动画不受它影响。
         notify: enabled
+        # 哪些提供方路由按峰谷计费、因此受峰时约束；其余提供方（自建网关、第三方中转、
+        # 别家模型）在峰时不会被阻塞。空列表表示谁都不拦。
+        peakProviders:
+          - deepseek-official
         # 峰时开始时是否中止正在运行的轮次。
         cancelRunningOnPeak: true
         # 谷时开始时是否自动续跑被停下的工作。

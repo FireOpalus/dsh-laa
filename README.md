@@ -170,6 +170,30 @@ LAA 关掉（`/laa off` 或点开关），攒下的输入会在**当刻**发出�
 知道自己不是「等到了谷时」，而是「人把 LAA 关了」。当时没有实时 agent 的会话交不出去，
 输入留在状态里，等它下次运行（agent 被拉起）时立刻投递，一条都不会丢。
 
+### 只管按峰谷计费的提供方
+
+峰谷定价只存在于 **DeepSeek 官方路由**（DSH 里是 `deepseek-official`）。所以峰时约束
+**只作用于 `peakProviders` 里的提供方**（默认就是它一个）：别的路由——自建网关、第三方
+中转、别家模型——不按峰谷计费，峰时一个请求都不会被拦，会话照跑。
+
+路由是这样解析的（从最贴近事实到最兜底）：
+
+1. 会话**最近一次请求**的记录头（`session.requestHeader()`）——会话中途换过模型的话，
+   只有这里反映当前真正在用的路由；
+2. agent **创建时**的路由（`agent.options.provider`）；
+3. **部署默认**路由（`ctx.agentDefaultModel.currentSelection()`）。
+
+所以中途换模型会立刻跟上：换成别的提供方，峰时就不再拦你。三级都读不到路由时按
+「按峰谷计费」保守处理——宁可多等一会儿，也不漏拦真正按峰时计费的请求。
+
+开关的悬停提示会写明这一条：当会话当前的路由不在清单里时，多一行
+「峰时不会阻塞：这个提供方不按峰谷计费（openai）」。想让某个自建路由也受约束，把它的
+路由 id 加进 `peakProviders` 即可；`[]` 表示谁都不拦。
+
+一个例外要说清楚：如果这个会话**之前**（还是按峰谷计费的路由时）已经在峰时攒下了输入，
+那些输入仍然按原来的节奏走——谷时投递，或者你 `/laa off` 立即投递。换路由不会替你把
+已经压下的活立刻发出去。
+
 <a id="谷时到底发生什么"></a>
 ## 谷时到底发生什么
 
@@ -202,6 +226,8 @@ LAA 关掉（`/laa off` 或点开关），攒下的输入会在**当刻**发出�
         start: '14:00'
         end: '18:00'
     defaultMode: false
+    peakProviders:
+      - deepseek-official
     cancelRunningOnPeak: true
     resumeOnValley: true
     tickMs: 30000
@@ -214,6 +240,7 @@ LAA 关掉（`/laa off` 或点开关），攒下的输入会在**当刻**发出�
 | `timeZone` | `'Asia/Shanghai'` | 峰时窗口所依据的 IANA 时区（DeepSeek 官方口径为北京时间）。 |
 | `peakWindows` | 见上 | 峰时窗口数组，**其余时段一律是谷时**。`days` 接受 `mon`…`sun` 或 `1`（周一）…`7`（周日）；`start`/`end` 为 `HH:MM`；`end <= start` 表示跨零点窗口。 |
 | `defaultMode` | `false` | 从未被 `/laa` 切换过的会话是否默认开启。显式关掉过的会话不会被它重新打开。 |
+| `peakProviders` | `['deepseek-official']` | 哪些提供方路由**按峰谷计费**、因此受峰时约束；其余提供方在峰时不被阻塞。空数组表示谁都不拦（峰时约束失效，谷时重放语义保留）。 |
 | `notify` | `'enabled'` | 峰谷切换时的浏览器通知策略：`enabled`（只有开着 LAA 的会话才播报）、`always`（任何会话都播报）、`off`（不播报）。只影响通知，开关上的切换动画不受影响。 |
 | `cancelRunningOnPeak` | `true` | 峰时开始时是否中止正在跑的轮次。 |
 | `resumeOnValley` | `true` | 谷时开始时是否自动续跑。 |

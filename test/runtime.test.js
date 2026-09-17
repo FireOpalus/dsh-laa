@@ -456,6 +456,125 @@ test('坏掉的谱系（自指或成环）不会让解析转不出来', () => {
   });
 });
 
+test('只有按峰谷计费的提供方受管辖：deepseek-official 照旧被拦', () => {
+  withHarness({ now: BEIJING_MONDAY_PEAK }, (h) => {
+    h.runtime.setEnabled('session-a', true);
+    const agent = h.agent('session-a', { status: 'running', provider: 'deepseek-official' });
+    h.runtime.start();
+
+    assert.equal(h.cancels('session-a').length, 1, '峰时照样停下正在跑的轮次');
+    assert.deepEqual(
+      h.runtime.preStep({ agent, turn: 1, step: 1, messages: [] }, () => ({ kind: 'enter', messages: [] })),
+      { kind: 'reject' },
+    );
+    const snapshot = h.runtime.snapshot('session-a');
+    assert.equal(snapshot.provider, 'deepseek-official');
+    assert.equal(snapshot.peakBilled, true);
+  });
+});
+
+test('别的提供方在峰时不被阻塞：不停轮次、也不拒绝步骤', () => {
+  withHarness({ now: BEIJING_MONDAY_PEAK }, (h) => {
+    h.runtime.setEnabled('session-a', true);
+    const agent = h.agent('session-a', { status: 'running', provider: 'openai' });
+    h.runtime.start();
+
+    assert.equal(h.cancels('session-a').length, 0, '不是按峰谷计费的提供方：峰时不停它');
+    assert.equal(h.entry('session-a').suspended, false);
+
+    let downstreamRan = false;
+    const decision = h.runtime.preStep({ agent, turn: 1, step: 1, messages: [{ id: 'm1', role: 'user', content: [{ type: 'text', text: '照跑' }], source: { kind: 'user' } }] }, () => {
+      downstreamRan = true;
+      return { kind: 'enter', messages: [] };
+    });
+    assert.equal(downstreamRan, true);
+    assert.deepEqual(decision, { kind: 'enter', messages: [] });
+    assert.equal(h.entry('session-a').deferred.length, 0, '什么都不用暂存');
+
+    const snapshot = h.runtime.snapshot('session-a');
+    assert.equal(snapshot.provider, 'openai');
+    assert.equal(snapshot.peakBilled, false);
+  });
+});
+
+test('会话中途换模型：以最近一次请求的路由为准，而不是 agent 创建时的路由', () => {
+  withHarness({ now: BEIJING_MONDAY_PEAK }, (h) => {
+    h.runtime.setEnabled('session-a', true);
+    /* 创建时还是 deepseek-official，最近一次请求已经走了 openai。 */
+    const agent = h.agent('session-a', { provider: 'deepseek-official', loggedProvider: 'openai' });
+    h.runtime.start();
+
+    assert.equal(h.runtime.snapshot('session-a').provider, 'openai');
+    let downstreamRan = false;
+    h.runtime.preStep({ agent, turn: 1, step: 1, messages: [] }, () => {
+      downstreamRan = true;
+      return { kind: 'enter', messages: [] };
+    });
+    assert.equal(downstreamRan, true, '换过模型之后峰时不再拦');
+  });
+});
+
+test('会话还没发过请求时，用部署默认路由判断', () => {
+  withHarness({ now: BEIJING_MONDAY_PEAK }, (h) => {
+    h.provide('agentDefaultModel', { currentSelection: () => ({ provider: 'openai', model: 'x' }) });
+    h.runtime.setEnabled('session-a', true);
+    const agent = h.agent('session-a');
+    h.runtime.start();
+
+    assert.equal(h.runtime.snapshot('session-a').provider, 'openai');
+    let downstreamRan = false;
+    h.runtime.preStep({ agent, turn: 1, step: 1, messages: [] }, () => {
+      downstreamRan = true;
+      return { kind: 'enter', messages: [] };
+    });
+    assert.equal(downstreamRan, true, '默认路由不按峰谷计费：峰时不拦');
+  });
+});
+
+test('读不到任何路由信息时按「按峰谷计费」保守处理（照旧拦）', () => {
+  withHarness({ now: BEIJING_MONDAY_PEAK }, (h) => {
+    h.runtime.setEnabled('session-a', true);
+    const agent = h.agent('session-a'); // 没有 options.provider，也没有 requestHeader
+    h.runtime.start();
+    assert.deepEqual(
+      h.runtime.preStep({ agent, turn: 1, step: 1, messages: [] }, () => ({ kind: 'enter', messages: [] })),
+      { kind: 'reject' },
+    );
+    assert.equal(h.runtime.snapshot('session-a').peakBilled, true);
+  });
+});
+
+test('peakProviders：默认只有 deepseek-official，可换清单也可清空', () => {
+  withHarness({ now: BEIJING_MONDAY_PEAK, config: { peakProviders: ['my-deepseek'] } }, (h) => {
+    h.runtime.setEnabled('session-a', true);
+    const agent = h.agent('session-a', { provider: 'deepseek-official' });
+    h.runtime.start();
+    let downstreamRan = false;
+    h.runtime.preStep({ agent, turn: 1, step: 1, messages: [] }, () => {
+      downstreamRan = true;
+      return { kind: 'enter', messages: [] };
+    });
+    assert.equal(downstreamRan, true, '换成自定义清单后 deepseek-official 不再受管');
+  });
+
+  withHarness({ now: BEIJING_MONDAY_PEAK, config: { peakProviders: [] } }, (h) => {
+    assert.deepEqual(h.runtime.config.peakProviders, [], '空清单是合法的：谁都不拦');
+    h.runtime.setEnabled('session-a', true);
+    const agent = h.agent('session-a', { provider: 'deepseek-official' });
+    h.runtime.start();
+    let downstreamRan = false;
+    h.runtime.preStep({ agent, turn: 1, step: 1, messages: [] }, () => {
+      downstreamRan = true;
+      return { kind: 'enter', messages: [] };
+    });
+    assert.equal(downstreamRan, true);
+  });
+
+  withHarness({ now: BEIJING_MONDAY_PEAK, config: { peakProviders: 'deepseek-official' } }, (h) => {
+    assert.deepEqual(h.runtime.config.peakProviders, ['deepseek-official'], '非法值退回默认清单');
+  });
+});
+
 test('通知策略：默认 enabled，always / off 原样，其它值一律退回默认', () => {
   withHarness({ now: BEIJING_SATURDAY, config: { notify: 'always' } }, (h) => {
     assert.equal(h.runtime.snapshot('session-a').notify, 'always');

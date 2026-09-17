@@ -124,6 +124,9 @@ export function createRuntimeHarness({ statePath, now, manual = false, config = 
    * @param options.owner - 运行时父代理的 id（子代理）。
    * @param options.header - 会话 header；DSH 把子会话的 `origin: 'subagent'` 与
    *   `parentSession` 记在这里，用 {@link childHeader} 造一个。
+   * @param options.provider - agent 创建时的路由（`agent.options.provider`）。
+   * @param options.loggedProvider - 会话最近一次请求实际走的路由
+   *   （`session.requestHeader()`），用来模拟「中途换了模型」。
    */
   function agent(id, options = {}) {
     const existing = agents.find((candidate) => candidate.id === id);
@@ -136,7 +139,14 @@ export function createRuntimeHarness({ statePath, now, manual = false, config = 
       id,
       owner: options.owner,
       status: options.status ?? 'idle',
-      session: options.header === undefined ? { id } : { id, header: options.header },
+      options: options.provider === undefined ? {} : { provider: options.provider, model: options.model ?? 'test-model' },
+      session: {
+        id,
+        ...(options.header === undefined ? {} : { header: options.header }),
+        ...(options.loggedProvider === undefined ? {} : {
+          requestHeader: () => ({ config: { provider: options.loggedProvider, model: options.model ?? 'test-model' } }),
+        }),
+      },
       cancelCalls: [],
       followupCalls: [],
       cancel(cause, cancelOptions) {

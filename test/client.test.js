@@ -675,6 +675,24 @@ test('点开关时顺手申请一次通知权限（浏览器要求用户手势�
   }
 });
 
+test('提供方不按峰谷计费时，悬停提示说明峰时不会阻塞', async () => {
+  const state = controlState({ enabled: true, phase: 'peak', peakBilled: false, provider: 'openai' });
+  const { exports } = await loadBundle(createReact([state, false, '']));
+  const client = createClientContext();
+  exports.apply(client.ctx);
+  const zh = client.dictionaries[0].dict.zh;
+  const element = client.registrations[0].component({ sessionId: 's1', t: (key) => zh[key] ?? key });
+
+  assert.match(element.props.title, /峰时不会阻塞：这个提供方不按峰谷计费（openai）/);
+
+  /* 受峰时约束时不出现这一行（另开一份 bundle 实例，假 React 的 useState 按调用次数发牌） */
+  const billed = await loadBundle(createReact([controlState({ enabled: true, phase: 'peak', peakBilled: true, provider: 'deepseek-official' }), false, '']));
+  const billedClient = createClientContext();
+  billed.exports.apply(billedClient.ctx);
+  const billedElement = billedClient.registrations[0].component({ sessionId: 's1', t: (key) => zh[key] ?? key });
+  assert.doesNotMatch(billedElement.props.title, /峰时不会阻塞/);
+});
+
 test('单击开关会把新状态 POST 给控制面', async () => {
   const state = {
     sessionId: 's1',

@@ -40,6 +40,7 @@ test('GET /health 报告总开关与时区', () => {
     assert.equal(outcome.payload.value.plugin, 'dsh-laa');
     assert.equal(outcome.payload.value.masterEnabled, true);
     assert.equal(outcome.payload.value.timeZone, 'Asia/Shanghai');
+    assert.deepEqual(outcome.payload.value.peakProviders, ['deepseek-official'], '受峰时约束的提供方清单');
   });
 });
 
